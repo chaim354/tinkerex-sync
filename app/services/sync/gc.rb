@@ -24,6 +24,15 @@ module Sync
       end
     end
 
+    # Prune changelog history at or below `keep_after`, leaving the tree + versions
+    # intact (the snapshot still reflects current state). A device whose cursor falls
+    # below the new floor must full-resync from the snapshot — the client detects this
+    # via the `oldest_seq` the changes endpoint now reports. Call from a retention policy,
+    # NOT in the write path. Returns the count pruned.
+    def self.prune_changelog!(user, keep_after:)
+      user.changelog_entries.where("seq <= ?", keep_after).delete_all
+    end
+
     # Delete chunk metadata + storage objects for chunks at refcount 0 past a grace
     # period. Storage deletion is best-effort.
     def self.sweep_orphans!(user, grace: 1.hour)

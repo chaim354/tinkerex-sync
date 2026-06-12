@@ -10,7 +10,11 @@ module Sync
       entries = user.changelog_entries.since(since).limit(limit).to_a
       {
         changes: entries.map { |e| serialize(user, e) },
-        head_seq: user.head_seq
+        head_seq: user.head_seq,
+        # The oldest changelog entry still retained. If a client's cursor is below this,
+        # the entries it needs were pruned — it must fall back to a full snapshot
+        # (`SyncEngine::pull_changes` detects the gap and resyncs). 0 when empty.
+        oldest_seq: user.changelog_entries.minimum(:seq) || 0
       }
     end
 

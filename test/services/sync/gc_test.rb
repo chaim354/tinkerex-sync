@@ -116,5 +116,78 @@ module Sync
     ensure
       Storage::ChunkStore.reset!
     end
+
+    # ---- apply_retention! (policy → prune_version! → sweep) -------------------
+
+    # Make N versions of one node, each with its own unique chunk, the newest current.
+    # Returns the versions oldest→newest. Spaces them out by created_at age so the tiered
+    # policy thins them; sets node.current_version_id to the newest.
+    def make_history!(node_id:, ages:)
+      versions = ages.map do |age|
+        h = SecureRandom.hex(32)
+        Storage::ChunkStore.current.put!(@user.id, h, "bytes")
+        manifest = SecureRandom.hex(8)
+        ManifestChunk.create!(user_id: @user.id, manifest_id: manifest, seq: 0,
+                              chunk_hash: h, offset: 0, length: 5)
+        Chunk.create!(user_id: @user.id, chunk_hash: h, size: 5, refcount: 1)
+        @user.versions.create!(version_id: SecureRandom.uuid, node_id:, manifest_id: manifest,
+                               size: 5, parent_version_id: nil, created_at: age.ago)
+      end
+      newest = versions.max_by(&:created_at)
+      @user.nodes.create!(node_id:, name: "f", kind: "file", deleted: false,
+                          current_version_id: newest.version_id)
+      versions
+    end
+
+    test "apply_retention! with keep_all prunes nothing" do
+      nid = SecureRandom.uuid
+      make_history!(node_id: nid, ages: [ 1.minute, 5.days, 400.days ])
+      assert_no_difference -> { @user.versions.where(node_id: nid).count } do
+        Sync::Gc.apply_retention!(@user, policy: Sync::RetentionPolicy.for(mode: "keep_all"))
+      end
+    end
+
+    test "apply_retention! tiered prunes thinned versions but NEVER current" do
+      nid = SecureRandom.uuid
+      # current (1 min), plus 3 versions on the same old day → 2 of those 3 thinned.
+      vs = make_history!(node_id: nid, ages: [ 1.minute, 5.days, 5.days + 1.hour, 5.days + 2.hours ])
+      current = vs.max_by(&:created_at)
+
+      Sync::Gc.apply_retention!(@user, policy: Sync::RetentionPolicy.for(mode: "tiered"), grace: 0)
+
+      surviving = @user.versions.where(node_id: nid).pluck(:version_id)
+      assert_includes surviving, current.version_id, "current_version is never pruned"
+      assert_equal 2, surviving.length, "current + one daily survivor"
+    end
+
+    test "apply_retention! tiered NEVER prunes a pinned version" do
+      nid = SecureRandom.uuid
+      vs = make_history!(node_id: nid, ages: [ 1.minute, 200.days, 200.days + 1.hour ])
+      current = vs.max_by(&:created_at)
+      pinned = vs.min_by(&:created_at)
+      pinned.update!(pinned: true)
+
+      Sync::Gc.apply_retention!(@user, policy: Sync::RetentionPolicy.for(mode: "tiered"), grace: 0)
+
+      surviving = @user.versions.where(node_id: nid).pluck(:version_id)
+      assert_includes surviving, pinned.version_id, "pinned version is never pruned"
+      assert_includes surviving, current.version_id
+    end
+
+    test "apply_retention! tiered frees the chunks of pruned versions from storage" do
+      nid = SecureRandom.uuid
+      vs = make_history!(node_id: nid, ages: [ 1.minute, 5.days, 5.days + 1.hour ])
+      # Same-day pair {5d, 5d+1h}: tiered keeps the NEWEST (5d), thins the older (5d+1h).
+      pruned_candidate = vs.min_by(&:created_at) # oldest overall → the 5d+1h one
+      pruned_hash = pruned_candidate.manifest_chunks.first.chunk_hash
+      assert Storage::ChunkStore.current.exists?(@user.id, pruned_hash)
+
+      Sync::Gc.apply_retention!(@user, policy: Sync::RetentionPolicy.for(mode: "tiered"), grace: 0)
+
+      assert_nil @user.versions.find_by(version_id: pruned_candidate.version_id), "version pruned"
+      assert_nil @user.chunks.find_by(chunk_hash: pruned_hash), "chunk row gone"
+      assert_not Storage::ChunkStore.current.exists?(@user.id, pruned_hash),
+                 "refcount-0 chunk deleted from storage"
+    end
   end
 end

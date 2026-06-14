@@ -79,5 +79,42 @@ module Sync
       end
       assert_equal 1, @user.chunks.find_by(chunk_hash: a).refcount
     end
+
+    test "sweep_orphans! actually deletes the refcount-0 chunk from storage" do
+      a = "a" * 64
+      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a) ])
+      # The client uploaded the bytes; simulate the object existing in storage.
+      Storage::ChunkStore.current.put!(@user.id, a, "bytes")
+      assert Storage::ChunkStore.current.exists?(@user.id, a)
+
+      Sync::Gc.prune_version!(@user, v1) # a → refcount 0
+      @user.chunks.find_by(chunk_hash: a).update_column(:updated_at, 2.hours.ago)
+
+      Sync::Gc.sweep_orphans!(@user, grace: 1.hour)
+
+      assert_nil @user.chunks.find_by(chunk_hash: a), "row gone"
+      assert_not Storage::ChunkStore.current.exists?(@user.id, a),
+                 "object deleted from storage"
+    end
+
+    test "sweep_orphans! deletes the row even if the storage delete raises (failure-safe)" do
+      a = "a" * 64
+      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a) ])
+      Sync::Gc.prune_version!(@user, v1)
+      @user.chunks.find_by(chunk_hash: a).update_column(:updated_at, 2.hours.ago)
+
+      # A storage that errors on delete (e.g. transient S3 outage) must not corrupt
+      # refcount state: the row is removed first, the storage delete is best-effort.
+      boom = Object.new
+      def boom.delete(*) = raise("S3 unreachable")
+      Storage::ChunkStore.current = boom
+
+      assert_difference -> { @user.chunks.count }, -1 do
+        assert_nothing_raised { Sync::Gc.sweep_orphans!(@user, grace: 1.hour) }
+      end
+      assert_nil @user.chunks.find_by(chunk_hash: a)
+    ensure
+      Storage::ChunkStore.reset!
+    end
   end
 end

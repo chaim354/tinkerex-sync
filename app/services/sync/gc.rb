@@ -34,13 +34,27 @@ module Sync
     end
 
     # Delete chunk metadata + storage objects for chunks at refcount 0 past a grace
-    # period. Storage deletion is best-effort.
+    # period. Never frees a still-referenced or freshly-zeroed chunk.
+    #
+    # Order matters for failure-safety: destroy the DB row FIRST, then delete the
+    # storage object. A storage outage therefore can't corrupt refcount state — at
+    # worst it orphans bytes in the object store, which a later sweep (or manual
+    # reconcile) re-deletes harmlessly (delete is idempotent). The row is the source of
+    # truth for "is this chunk live"; we never leave a row pointing at deleted bytes.
     def self.sweep_orphans!(user, grace: 1.hour)
       cutoff = grace.ago
+      store = Storage::ChunkStore.current
       user.chunks.where(refcount: ..0).where("updated_at < ?", cutoff).find_each do |chunk|
-        # Storage::ChunkStore could expose delete(user_id, hash); omitted here as the
-        # presign-only interface doesn't delete. Wire a delete() when adding S3 admin.
+        hash = chunk.chunk_hash
         chunk.destroy
+        begin
+          store.delete(user.id, hash)
+        rescue => e
+          # Best-effort: the row is already gone, so refcount accounting stays correct.
+          # Log and continue; the orphaned object is reclaimed on a later sweep.
+          Rails.logger.warn("Sync::Gc.sweep_orphans! storage delete failed for " \
+                            "chunks/#{user.id}/#{hash}: #{e.class}: #{e.message}")
+        end
       end
     end
   end

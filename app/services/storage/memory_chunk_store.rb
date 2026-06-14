@@ -17,6 +17,12 @@ module Storage
       @objects.key?(key_for(user_id, hash))
     end
 
+    # Idempotent: deleting an absent key is a no-op (mirrors S3's delete semantics).
+    def delete(user_id, hash)
+      @objects.delete(key_for(user_id, hash))
+      nil
+    end
+
     # Test helper: simulate a client having uploaded a chunk.
     def put!(user_id, hash, data = "x")
       @objects[key_for(user_id, hash)] = data

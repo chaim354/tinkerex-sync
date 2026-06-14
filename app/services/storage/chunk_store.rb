@@ -31,5 +31,10 @@ module Storage
     def presign_put(_user_id, _hash, expires_in: 900) = raise(NotImplementedError)
     def presign_get(_user_id, _hash, expires_in: 3600) = raise(NotImplementedError)
     def exists?(_user_id, _hash) = raise(NotImplementedError)
+
+    # Delete the object at chunks/<user>/<hash>. The GC sweep calls this AFTER the chunk
+    # row is gone, so it MUST be idempotent (tolerate an already-deleted key). The base
+    # is a safe no-op so a backend without an admin delete never blocks a sweep.
+    def delete(_user_id, _hash) = nil
   end
 end

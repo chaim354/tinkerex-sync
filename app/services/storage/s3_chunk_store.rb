@@ -38,5 +38,14 @@ module Storage
     rescue Aws::S3::Errors::NotFound, Aws::S3::Errors::NoSuchKey
       false
     end
+
+    # Free the object. S3/R2 delete_object is idempotent (204 even for a missing key);
+    # we also swallow NotFound/NoSuchKey so a re-run after a partial sweep can't raise.
+    def delete(user_id, hash)
+      @client.delete_object(bucket: @bucket, key: key_for(user_id, hash))
+      nil
+    rescue Aws::S3::Errors::NotFound, Aws::S3::Errors::NoSuchKey
+      nil
+    end
   end
 end

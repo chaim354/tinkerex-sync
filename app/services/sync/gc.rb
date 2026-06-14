@@ -24,6 +24,32 @@ module Sync
       end
     end
 
+    # Apply a retention policy across a user's whole library, then sweep freed chunks.
+    #
+    # For each node: compute the policy's keep-set (which ALWAYS includes the node's
+    # current_version + any pinned version), then prune_version! every version NOT in it.
+    # Pruning decrements the version's chunks' refcounts; sweep_orphans! then frees any
+    # chunk that reached refcount 0 past the grace window (DB row + storage object).
+    #
+    # Self-host defaults to keep_all (nothing is pruned). Pass a Tiered policy (or set
+    # RETENTION_POLICY=tiered) for managed thinning. Returns the number of versions pruned.
+    def self.apply_retention!(user, policy: RetentionPolicy.default, grace: 1.hour)
+      pruned = 0
+      node_ids = user.versions.distinct.pluck(:node_id)
+      node_ids.each do |node_id|
+        node = user.nodes.find_by(node_id:)
+        versions = user.versions.where(node_id:).to_a
+        keep = policy.keep_set(versions, current_version_id: node&.current_version_id)
+        versions.each do |v|
+          next if keep.include?(v.version_id)
+          prune_version!(user, v)
+          pruned += 1
+        end
+      end
+      sweep_orphans!(user, grace:)
+      pruned
+    end
+
     # Prune changelog history at or below `keep_after`, leaving the tree + versions
     # intact (the snapshot still reflects current state). A device whose cursor falls
     # below the new floor must full-resync from the snapshot — the client detects this
@@ -34,13 +60,28 @@ module Sync
     end
 
     # Delete chunk metadata + storage objects for chunks at refcount 0 past a grace
-    # period. Storage deletion is best-effort.
+    # period. Never frees a still-referenced or freshly-zeroed chunk.
+    #
+    # Order matters for failure-safety: destroy the DB row FIRST, then delete the
+    # storage object. A storage outage therefore can't corrupt refcount state — at
+    # worst it orphans bytes in the object store, which a later sweep (or manual
+    # reconcile) re-deletes harmlessly (delete is idempotent). The row is the source of
+    # truth for "is this chunk live"; we never leave a row pointing at deleted bytes.
     def self.sweep_orphans!(user, grace: 1.hour)
+      grace = grace.seconds if grace.is_a?(Numeric)
       cutoff = grace.ago
+      store = Storage::ChunkStore.current
       user.chunks.where(refcount: ..0).where("updated_at < ?", cutoff).find_each do |chunk|
-        # Storage::ChunkStore could expose delete(user_id, hash); omitted here as the
-        # presign-only interface doesn't delete. Wire a delete() when adding S3 admin.
+        hash = chunk.chunk_hash
         chunk.destroy
+        begin
+          store.delete(user.id, hash)
+        rescue => e
+          # Best-effort: the row is already gone, so refcount accounting stays correct.
+          # Log and continue; the orphaned object is reclaimed on a later sweep.
+          Rails.logger.warn("Sync::Gc.sweep_orphans! storage delete failed for " \
+                            "chunks/#{user.id}/#{hash}: #{e.class}: #{e.message}")
+        end
       end
     end
   end

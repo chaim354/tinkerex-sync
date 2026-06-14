@@ -11,7 +11,7 @@ module Sync
       @device = Device.register!(user: @user, name: "t")
     end
 
-    def commit_node!(name:, chunks: [{ "hash" => SecureRandom.hex(32), "offset" => 0, "length" => 5 }])
+    def commit_node!(name:, chunks: [ { "hash" => SecureRandom.hex(32), "offset" => 0, "length" => 5 } ])
       node_id = SecureRandom.uuid
       cid = SecureRandom.uuid
       Sync::Commit.begin(user: @user, device: @device, commit_id: cid, node_id:,
@@ -49,8 +49,8 @@ module Sync
     end
 
     test "file nodes carry their manifest and size" do
-      chunks = [{ "hash" => "a" * 64, "offset" => 0, "length" => 10 },
-                { "hash" => "b" * 64, "offset" => 10, "length" => 20 }]
+      chunks = [ { "hash" => "a" * 64, "offset" => 0, "length" => 10 },
+                { "hash" => "b" * 64, "offset" => 10, "length" => 20 } ]
       node_id = commit_node!(name: "part.stl", chunks:)
 
       node = Sync::Tree.call(user: @user, after_id: 0, limit: 100)[:nodes].find { |n| n[:node_id] == node_id }

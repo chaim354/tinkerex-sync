@@ -15,7 +15,7 @@ module Sync
     def commit!(name:)
       node_id = SecureRandom.uuid
       cid = SecureRandom.uuid
-      chunks = [{ "hash" => SecureRandom.hex(32), "offset" => 0, "length" => 5 }]
+      chunks = [ { "hash" => SecureRandom.hex(32), "offset" => 0, "length" => 5 } ]
       Sync::Commit.begin(user: @user, device: @device, commit_id: cid, node_id:,
                          parent_node_id: nil, name:, base_version_id: nil, size: 5, manifest: chunks)
       Sync::Commit.finalize(user: @user, commit_id: cid)
@@ -27,7 +27,7 @@ module Sync
 
       page = Sync::Changes.call(user: @user, since: 0, limit: 5)
       assert_equal 5, page[:changes].size, "respects the page limit"
-      assert_equal [1, 2, 3, 4, 5], page[:changes].map { |c| c[:seq] }, "ascending by seq from the cursor"
+      assert_equal [ 1, 2, 3, 4, 5 ], page[:changes].map { |c| c[:seq] }, "ascending by seq from the cursor"
       assert_equal 12, page[:head_seq]
     end
 

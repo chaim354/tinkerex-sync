@@ -29,7 +29,7 @@ module Sync
           seq:, node_id:, op: "put", version_id: version.version_id, created_at: Time.current
         )
       end
-      [version, seq]
+      [ version, seq ]
     end
   end
 end

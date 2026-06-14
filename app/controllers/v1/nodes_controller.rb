@@ -5,7 +5,8 @@ module V1
       node = current_user.nodes.find_or_initialize_by(node_id: params.require(:node_id))
       node.assign_attributes(
         parent_node_id: params[:parent_node_id], name: params.require(:name),
-        kind: "dir", deleted: false
+        kind: "dir", deleted: false, mode: params[:mode] || node.mode || 0o755,
+        mtime: params[:mtime] || node.mtime
       )
       seq = Sync::Mutation.apply(user: current_user, node:, op: "mkdir")
       LibraryChannel.broadcast_change(current_user, seq)
@@ -50,6 +51,35 @@ module V1
       )
       LibraryChannel.broadcast_change(current_user, seq)
       render json: { version_id: version.version_id, seq: }
+    end
+
+    # POST /v1/nodes/:node_id/lock — best-effort acquire/refresh. Always 200 with the
+    # status (held + by_me + device_name); the client decides what to do if not by_me.
+    def lock
+      render json: Sync::Locks.acquire(user: current_user, node_id: params[:node_id], device: current_device)
+    end
+
+    # POST /v1/nodes/:node_id/unlock — release if this device holds it.
+    def unlock
+      Sync::Locks.release(user: current_user, node_id: params[:node_id], device: current_device)
+      render json: { released: true }
+    end
+
+    # POST /v1/nodes/:node_id/resolve_conflict
+    #   { keep_version_id }  -> keep one side as current (the other stays in history)
+    #   { split: true }      -> keep both (incoming becomes a new sibling file)
+    def resolve_conflict
+      if ActiveModel::Type::Boolean.new.cast(params[:split])
+        new_node_id, seq = Sync::Conflicts.split(user: current_user, node_id: params[:node_id])
+        LibraryChannel.broadcast_change(current_user, seq)
+        render json: { split_node_id: new_node_id, seq: }
+      else
+        seq = Sync::Conflicts.keep(
+          user: current_user, node_id: params[:node_id], version_id: params.require(:keep_version_id)
+        )
+        LibraryChannel.broadcast_change(current_user, seq)
+        render json: { seq: }
+      end
     end
   end
 end

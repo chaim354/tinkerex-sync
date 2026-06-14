@@ -24,7 +24,7 @@ module Sync
       if node
         out[:node] = {
           node_id: node.node_id, parent_node_id: node.parent_node_id,
-          name: node.name, kind: node.kind, deleted: node.deleted
+          name: node.name, kind: node.kind, deleted: node.deleted, mode: node.mode, mtime: node.mtime
         }
       end
       if entry.op == "put" && entry.version_id.present?

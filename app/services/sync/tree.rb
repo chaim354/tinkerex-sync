@@ -14,7 +14,7 @@ module Sync
     def self.serialize(user, node)
       out = {
         node_id: node.node_id, parent_node_id: node.parent_node_id,
-        name: node.name, kind: node.kind
+        name: node.name, kind: node.kind, mode: node.mode, mtime: node.mtime
       }
       if node.file? && node.current_version_id.present?
         version = node.current_version

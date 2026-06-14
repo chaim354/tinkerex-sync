@@ -24,7 +24,7 @@ module Sync
 
     test "prune_version! decrements refcounts and destroys the version" do
       a, b = "a" * 64, "b" * 64
-      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [chunk(a), chunk(b)])
+      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a), chunk(b) ])
       assert_equal 1, @user.chunks.find_by(chunk_hash: a).refcount
       assert_equal 1, @user.chunks.find_by(chunk_hash: b).refcount
 
@@ -37,8 +37,8 @@ module Sync
 
     test "prune_version! never frees a chunk still referenced by another version" do
       shared = "5" * 64
-      v1, = commit!(name: "a", node_id: SecureRandom.uuid, chunks: [chunk(shared)])
-      commit!(name: "b", node_id: SecureRandom.uuid, chunks: [chunk(shared)])
+      v1, = commit!(name: "a", node_id: SecureRandom.uuid, chunks: [ chunk(shared) ])
+      commit!(name: "b", node_id: SecureRandom.uuid, chunks: [ chunk(shared) ])
       assert_equal 2, @user.chunks.find_by(chunk_hash: shared).refcount
 
       Sync::Gc.prune_version!(@user, v1)
@@ -47,7 +47,7 @@ module Sync
 
     test "sweep_orphans! removes refcount-0 chunks past the grace period only" do
       a = "a" * 64
-      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [chunk(a)])
+      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a) ])
       Sync::Gc.prune_version!(@user, v1) # a → refcount 0
       # Age it past the grace window (bypass the updated_at touch).
       @user.chunks.find_by(chunk_hash: a).update_column(:updated_at, 2.hours.ago)
@@ -60,7 +60,7 @@ module Sync
 
     test "sweep_orphans! keeps a recently-zeroed chunk (within grace)" do
       a = "a" * 64
-      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [chunk(a)])
+      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a) ])
       Sync::Gc.prune_version!(@user, v1) # refcount 0, updated just now
 
       assert_no_difference -> { @user.chunks.count } do
@@ -71,7 +71,7 @@ module Sync
 
     test "sweep_orphans! never removes a live (refcount>0) chunk" do
       a = "a" * 64
-      commit!(name: "f", node_id: SecureRandom.uuid, chunks: [chunk(a)]) # refcount 1
+      commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a) ]) # refcount 1
       @user.chunks.find_by(chunk_hash: a).update_column(:updated_at, 2.hours.ago)
 
       assert_no_difference -> { @user.chunks.count } do

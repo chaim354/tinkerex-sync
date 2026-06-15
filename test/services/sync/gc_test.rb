@@ -7,6 +7,11 @@ module Sync
   # (no freeing a still-referenced chunk, no sweeping a fresh or live one).
   class GcTest < ActiveSupport::TestCase
     setup do
+      # Freeze at a fixed midday UTC so the tiered policy's calendar-day/week/month
+      # buckets are deterministic — otherwise versions aged e.g. 5.days/5.days+2.hours
+      # straddle a UTC midnight when the suite runs late in the day and split across two
+      # daily buckets (a wall-clock-fragile test). travel_back runs automatically on teardown.
+      travel_to Time.utc(2026, 6, 1, 12, 0, 0)
       Storage::ChunkStore.reset!
       @user = User.create!(email: "gc@example.com")
       @device = Device.register!(user: @user, name: "t")

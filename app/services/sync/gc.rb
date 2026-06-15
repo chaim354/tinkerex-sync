@@ -71,7 +71,10 @@ module Sync
       grace = grace.seconds if grace.is_a?(Numeric)
       cutoff = grace.ago
       store = Storage::ChunkStore.current
-      user.chunks.where(refcount: ..0).where("updated_at < ?", cutoff).find_each do |chunk|
+      # `<=` so grace: 0 means "sweep immediately" (a chunk zeroed at `now` is collectable)
+      # rather than depending on real microseconds elapsing between the refcount touch and
+      # this query — which made grace-0 sweeps non-deterministic under a frozen test clock.
+      user.chunks.where(refcount: ..0).where("updated_at <= ?", cutoff).find_each do |chunk|
         hash = chunk.chunk_hash
         chunk.destroy
         begin

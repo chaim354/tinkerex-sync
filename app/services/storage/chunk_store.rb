@@ -17,6 +17,7 @@ module Storage
       def build
         case ENV.fetch("STORAGE_BACKEND", Rails.env.test? ? "memory" : "s3")
         when "memory" then MemoryChunkStore.new
+        when "local"  then LocalChunkStore.from_env
         when "s3"     then S3ChunkStore.from_env
         else raise ArgumentError, "unknown STORAGE_BACKEND"
         end

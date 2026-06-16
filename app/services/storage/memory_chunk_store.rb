@@ -13,8 +13,20 @@ module Storage
   class MemoryChunkStore < ChunkStore
     # Shared on-disk dir so presigned PUT (one request) and GET (a later request) see
     # the same bytes across requests/processes. Lives under tmp; safe to wipe.
+    #
+    # Under the parallel test runner workers share one DB but write real chunk files here;
+    # without a per-worker chunk dir, a keyspace-enumerating operation (e.g.
+    # Sync::ChunkReaper) in one worker would see another worker's objects. test_helper sets
+    # CHUNK_STORE_WORKER per worker (see parallelize_setup) so each gets an isolated
+    # keyspace. Unset (single-process / production) → the base dir.
     def root
-      @root ||= Rails.root.join("tmp", "dev-chunks").tap { |d| FileUtils.mkdir_p(d) }
+      @root ||= begin
+        name = "dev-chunks"
+        if (n = ENV["CHUNK_STORE_WORKER"]).present?
+          name = "dev-chunks-#{n}"
+        end
+        Rails.root.join("tmp", name).tap { |d| FileUtils.mkdir_p(d) }
+      end
     end
 
     def path_for(user_id, hash)
@@ -65,9 +77,28 @@ module Storage
       File.exist?(p) ? File.binread(p) : nil
     end
 
+    # Enumerate chunks/<user_id>/* (the reaper's per-user keyspace scan). The on-disk dir
+    # flattens slashes to "__", so we match the prefix and recover the hash from the suffix.
+    # last_modified is the file mtime — the object's storage age.
+    def list(user_id)
+      prefix = key_for(user_id, "").gsub("/", "__") # "chunks__<user_id>__"
+      Dir.glob(File.join(root, "#{prefix}*")).map do |path|
+        hash = File.basename(path).delete_prefix(prefix)
+        { hash:, last_modified: File.mtime(path) }
+      end
+    end
+
     # Test helper: simulate a client having uploaded a chunk.
     def put!(user_id, hash, data = "x")
       write_blob(user_id, hash, data)
+      self
+    end
+
+    # Test helper: backdate an object's storage age so reaper grace-window tests are
+    # deterministic (mirrors S3's last_modified without waiting real time).
+    def set_mtime!(user_id, hash, time)
+      t = time.to_time
+      File.utime(t, t, path_for(user_id, hash))
       self
     end
 

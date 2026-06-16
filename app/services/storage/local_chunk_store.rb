@@ -53,6 +53,25 @@ module Storage
       nil
     end
 
+    # Enumerate <dir>/chunks/<user_id>/* for the storage-orphan reaper. last_modified is
+    # the file mtime (the object's storage age).
+    def list(user_id)
+      base = File.join(@dir, "chunks", user_id.to_s)
+      return [] unless Dir.exist?(base)
+      Dir.children(base).filter_map do |hash|
+        path = File.join(base, hash)
+        next unless File.file?(path)
+        { hash:, last_modified: File.mtime(path) }
+      end
+    end
+
+    # Test helper: backdate an object's storage age (deterministic grace-window tests).
+    def set_mtime!(user_id, hash, time)
+      t = time.to_time
+      File.utime(t, t, path_for(user_id, hash))
+      self
+    end
+
     # ---- the storage tier (called by V1::Chunks::BlobController, not by sync callers) -------
 
     # On-disk path for a chunk. The hash is content-addressed (hex), the user_id an integer, so

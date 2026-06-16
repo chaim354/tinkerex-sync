@@ -8,8 +8,10 @@ module Sync
   #
   # v1 keeps all history (no aggressive pruning) so restore always works. This
   # exposes the mechanism: prune_version! for the future retention job, and
-  # sweep_orphans! for the periodic cleaner (also catches uploaded-but-never-finalized
-  # chunks, which are never inserted, and finalized-then-superseded ones once pruned).
+  # sweep_orphans! for the periodic cleaner (frees finalized-then-superseded chunks once
+  # pruned to refcount 0). NOTE: sweep_orphans! walks DB rows, so it does NOT reclaim
+  # chunk bytes from a commit that uploaded but never finalized — those have no `chunks`
+  # row at all. That storage-side leak is handled by Sync::ChunkReaper (G4).
   class Gc
     # Decrement refcounts for a version's chunks and delete the version. Call from a
     # retention policy (keep last N / daily-for-30d) — NOT in the normal write path.

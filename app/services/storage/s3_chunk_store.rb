@@ -39,6 +39,30 @@ module Storage
       false
     end
 
+    # Enumerate chunks/<user_id>/ for the storage-orphan reaper. Paginates list_objects_v2
+    # (1000 keys/page) over the per-user prefix; returns { hash:, last_modified: } for each.
+    # The hash is the key suffix after the prefix; last_modified is S3's object timestamp,
+    # which the reaper measures its grace window against. NOTE: list_objects_v2 is billed
+    # per request (~1 req / 1000 objects), so the reaper runs on a conservative schedule.
+    def list(user_id)
+      prefix = key_for(user_id, "") # "chunks/<user_id>/"
+      out = []
+      continuation = nil
+      loop do
+        resp = @client.list_objects_v2(
+          bucket: @bucket, prefix:, continuation_token: continuation
+        )
+        (resp.contents || []).each do |obj|
+          hash = obj.key.delete_prefix(prefix)
+          next if hash.empty? || hash.include?("/")
+          out << { hash:, last_modified: obj.last_modified }
+        end
+        break unless resp.is_truncated
+        continuation = resp.next_continuation_token
+      end
+      out
+    end
+
     # Free the object. S3/R2 delete_object is idempotent (204 even for a missing key);
     # we also swallow NotFound/NoSuchKey so a re-run after a partial sweep can't raise.
     def delete(user_id, hash)

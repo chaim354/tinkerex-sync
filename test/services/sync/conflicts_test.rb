@@ -78,11 +78,11 @@ module Sync
     test "four concurrent stale edits all surface (N-way, N=4)" do
       v1 = commit!(device: @dev_a, body: "one")
       commit!(device: @dev_a, body: "current v2", base: v1.version_id)
-      edits = ["dev-c", "dev-d", "dev-e"].map { |n| Device.register!(user: @user, name: n) }
+      edits = [ "dev-c", "dev-d", "dev-e" ].map { |n| Device.register!(user: @user, name: n) }
                                          .each_with_index
                                          .map { |d, i| commit!(device: d, body: "diverged #{i}", base: v1.version_id) }
       b_edit = commit!(device: @dev_b, body: "B diverged", base: v1.version_id)
-      expected = (edits + [b_edit]).map(&:version_id).sort
+      expected = (edits + [ b_edit ]).map(&:version_id).sort
 
       got = @user.conflicts.unresolved.where(node_id: @node_id).pluck(:incoming_version_id).sort
       assert_equal expected, got, "all four divergent incoming versions are independently surfaced"
@@ -98,7 +98,7 @@ module Sync
       list = Sync::Conflicts.list(user: @user).select { |c| c[:node_id] == @node_id }
       assert_equal 2, list.size, "both divergent sides are listed for the prompt"
       names = list.map { |c| c[:incoming][:device_name] }.sort
-      assert_equal ["shop-laptop", "workshop-pi"], names
+      assert_equal [ "shop-laptop", "workshop-pi" ], names
     end
 
     test "re-pushing the SAME divergent version is idempotent (no duplicate conflict row)" do

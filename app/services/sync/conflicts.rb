@@ -28,9 +28,10 @@ module Sync
       end
       seq = nil
       ApplicationRecord.transaction do
+        # Lock user row + seq first (FK-deadlock avoidance — see Sync::Commit#finalize).
+        seq = user.next_seq!
         node = user.nodes.find_by!(node_id:)
         node.current_version_id = version_id
-        seq = user.next_seq!
         node.updated_seq = seq
         node.save!
         user.changelog_entries.create!(seq:, node_id:, op: "put", version_id:, created_at: Time.current)
@@ -46,6 +47,8 @@ module Sync
       new_node_id = SecureRandom.uuid
       seq = nil
       ApplicationRecord.transaction do
+        # Lock user row + seq first (FK-deadlock avoidance — see Sync::Commit#finalize).
+        seq = user.next_seq!
         node = user.nodes.find_by!(node_id:)
         incoming = user.versions.find_by!(version_id: c.incoming_version_id)
         bump_refcounts!(user, incoming.manifest_id)
@@ -58,7 +61,6 @@ module Sync
           version_id: SecureRandom.uuid, node_id: new_node_id, manifest_id: incoming.manifest_id,
           size: incoming.size, device_id: incoming.device_id, created_at: Time.current
         )
-        seq = user.next_seq!
         copy.update!(current_version_id: v.version_id, updated_seq: seq)
         user.changelog_entries.create!(seq:, node_id: new_node_id, op: "put", version_id: v.version_id, created_at: Time.current)
         c.update!(resolved_at: Time.current)

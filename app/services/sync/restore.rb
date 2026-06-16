@@ -10,6 +10,10 @@ module Sync
       version = nil
       seq = nil
       ApplicationRecord.transaction do
+        # Lock the user row + allocate seq FIRST, before the FK-bound version/node writes — see
+        # Sync::Commit#finalize for the FK-KEY-SHARE-vs-FOR-UPDATE deadlock this avoids on Postgres.
+        seq = user.next_seq!
+
         hashes = ManifestChunk
                  .where(user_id: user.id, manifest_id: old.manifest_id)
                  .distinct.pluck(:chunk_hash)
@@ -22,7 +26,6 @@ module Sync
         node.current_version_id = version.version_id
         node.deleted = false
 
-        seq = user.next_seq!
         node.updated_seq = seq
         node.save!
         user.changelog_entries.create!(

@@ -57,6 +57,14 @@ module Sync
       version = nil
       seq = nil
       ApplicationRecord.transaction do
+        # Acquire the user-row lock + seq FIRST. Every write below (chunks/manifest/version/node,
+        # all FK-bound to `users`) takes a Postgres FOR KEY SHARE lock on the users row; deferring
+        # next_seq!'s FOR UPDATE until after them lets two concurrent commits each hold KEY SHARE
+        # and both want UPDATE → deadlock (observed live under load). Locking up front serializes
+        # a user's commits cleanly with no deadlock. (seq is only *used* at the end, but the LOCK
+        # must be taken before the FK writes.)
+        seq = user.next_seq!
+
         upsert_manifest!(user, manifest_id, manifest)
         upsert_chunks!(user, manifest)
 
@@ -105,7 +113,6 @@ module Sync
           op = "put"
         end
 
-        seq = user.next_seq!
         node.updated_seq = seq
         node.save!
         user.changelog_entries.create!(

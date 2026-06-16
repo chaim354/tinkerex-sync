@@ -70,9 +70,11 @@ module V1
     #   { split: true }      -> keep both (incoming becomes a new sibling file)
     def resolve_conflict
       if ActiveModel::Type::Boolean.new.cast(params[:split])
-        new_node_id, seq = Sync::Conflicts.split(user: current_user, node_id: params[:node_id])
+        # N-way: a node may have several divergent incoming versions; split makes a sibling for
+        # each. `split_node_id` stays for 2-way callers; `split_node_ids` lists every new sibling.
+        new_node_id, seq, new_node_ids = Sync::Conflicts.split(user: current_user, node_id: params[:node_id])
         LibraryChannel.broadcast_change(current_user, seq)
-        render json: { split_node_id: new_node_id, seq: }
+        render json: { split_node_id: new_node_id, split_node_ids: new_node_ids, seq: }
       else
         seq = Sync::Conflicts.keep(
           user: current_user, node_id: params[:node_id], version_id: params.require(:keep_version_id)

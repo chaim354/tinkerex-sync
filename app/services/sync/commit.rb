@@ -104,8 +104,16 @@ module Sync
         end
 
         if is_conflict
-          c = user.conflicts.unresolved.find_or_initialize_by(node_id: pending.node_id)
-          c.assign_attributes(current_version_id: prior_current, incoming_version_id: version.version_id)
+          # N-way: key the conflict by its INCOMING version so 3+ concurrent divergent edits each
+          # get their own row. The old find_or_initialize_by(node_id:) overwrote incoming_version_id,
+          # so a later device's stale push REPLACED an earlier device's incoming version in the open
+          # row — that earlier edit then survived only in version history, referenced by no conflict,
+          # invisible to the resolution UI (silent loss from the user's view). Keying by the incoming
+          # version gives one row per divergent edit; an idempotent re-finalize of the same version
+          # reuses its row.
+          c = user.conflicts.unresolved
+                  .find_or_initialize_by(node_id: pending.node_id, incoming_version_id: version.version_id)
+          c.current_version_id = prior_current
           c.save!
           op = "conflict"
         else

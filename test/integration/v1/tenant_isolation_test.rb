@@ -96,6 +96,26 @@ module V1
       assert_match %r{chunks/\d+/#{ahash}}, url, "URL is scoped to the user's chunk prefix"
     end
 
+    test "search never returns another user's nodes (same name)" do
+      alice = register(email: "alice5@example.com")
+      bob = register(email: "bob5@example.com")
+      # Both have an identically-named file; search must stay scoped to the caller.
+      alice_node = commit_file(alice, name: "secret-design.stl")
+      bob_node = commit_file(bob, name: "secret-design.stl")
+
+      get "/v1/search", params: { q: "secret-design" }, headers: auth(bob)
+      assert_response :success
+      ids = JSON.parse(response.body)["results"].map { |r| r["node_id"] }
+      assert_includes ids, bob_node, "Bob finds his own node"
+      assert_not_includes ids, alice_node, "Bob must NOT see Alice's identically-named node"
+      assert_equal 1, ids.size
+    end
+
+    test "search requires a valid token" do
+      get "/v1/search", params: { q: "x" }, headers: { "Authorization" => "Bearer nope" }
+      assert_response :unauthorized
+    end
+
     test "requests without a valid token are rejected" do
       get "/v1/tree", params: { after_id: 0 }, headers: { "Authorization" => "Bearer not-a-real-token" }
       assert_response :unauthorized

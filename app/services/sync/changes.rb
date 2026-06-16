@@ -44,6 +44,9 @@ module Sync
           node_id: node.node_id, parent_node_id: node.parent_node_id,
           name: node.name, kind: node.kind, deleted: node.deleted, mode: node.mode, mtime: node.mtime
         }
+        # A symlink carries its target (its whole content) on the node, base64'd so a
+        # non-UTF8 path survives JSON. The client decodes it back to the link bytes.
+        out[:node][:symlink_target] = Base64.strict_encode64(node.symlink_target) if node.symlink? && node.symlink_target
       end
       if entry.op == "put" && entry.version_id.present?
         version = versions[entry.version_id]

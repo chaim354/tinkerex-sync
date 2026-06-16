@@ -42,6 +42,10 @@ module Sync
           out[:size] = version.size
           out[:manifest] = manifests.fetch(version.manifest_id, [])
         end
+      elsif node.symlink? && node.symlink_target
+        # The link target is the symlink's whole content — tiny inline bytes, base64'd so
+        # a non-UTF8 path survives JSON. The client decodes it back to the link bytes.
+        out[:symlink_target] = Base64.strict_encode64(node.symlink_target)
       end
       out
     end

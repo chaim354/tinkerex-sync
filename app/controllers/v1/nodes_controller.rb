@@ -13,6 +13,24 @@ module V1
       render json: { node_id: node.node_id, seq: }, status: :created
     end
 
+    # POST /v1/nodes/symlink  { node_id, parent_node_id, name, symlink_target, mode, mtime }
+    # Create/update a symlink node. The link target is base64-encoded (it's raw path bytes,
+    # possibly non-UTF8) and stored inline on the node — a symlink has no version/manifest,
+    # so it's a single metadata mutation (like mkdir), op "symlink".
+    def symlink
+      node = current_user.nodes.find_or_initialize_by(node_id: params.require(:node_id))
+      target = params[:symlink_target].present? ? Base64.strict_decode64(params[:symlink_target]) : nil
+      node.assign_attributes(
+        parent_node_id: params[:parent_node_id], name: params.require(:name),
+        kind: "symlink", deleted: false, symlink_target: target,
+        mode: params[:mode] || node.mode || 0o777,
+        mtime: params[:mtime] || node.mtime
+      )
+      seq = Sync::Mutation.apply(user: current_user, node:, op: "symlink")
+      LibraryChannel.broadcast_change(current_user, seq)
+      render json: { node_id: node.node_id, seq: }, status: :created
+    end
+
     # DELETE /v1/nodes/:node_id   (tombstone; versions retained for restore)
     def destroy
       node = current_user.nodes.find_by!(node_id: params[:node_id])

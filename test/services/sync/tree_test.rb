@@ -59,6 +59,17 @@ module Sync
       assert_equal "a" * 64, node[:manifest].first[:hash]
     end
 
+    test "symlink nodes carry their kind and base64 target in the snapshot" do
+      target = "/usr/lib/libbar.dylib"
+      node = @user.nodes.new(node_id: SecureRandom.uuid, name: "libbar.dylib",
+                             kind: "symlink", symlink_target: target)
+      Sync::Mutation.apply(user: @user, node:, op: "symlink")
+
+      n = Sync::Tree.call(user: @user, after_id: 0, limit: 100)[:nodes].find { |x| x[:node_id] == node.node_id }
+      assert_equal "symlink", n[:kind]
+      assert_equal target, Base64.strict_decode64(n[:symlink_target])
+    end
+
     test "head_seq is reported for the client's starting cursor" do
       commit_node!(name: "f.bin")
       snap = Sync::Tree.call(user: @user, after_id: 0, limit: 100)

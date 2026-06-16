@@ -22,6 +22,21 @@ module Sync
       node_id
     end
 
+    # A symlink is metadata-only (no version/manifest): it's created via Sync::Mutation
+    # with op "symlink" and carries its target on the node. The delta must surface the
+    # symlink kind and the (base64-encoded) target so the client can recreate the link.
+    test "delta carries a symlink's kind and base64 target" do
+      target = "../shared/libfoo.so"
+      node = @user.nodes.new(node_id: SecureRandom.uuid, name: "libfoo.so",
+                             kind: "symlink", symlink_target: target)
+      Sync::Mutation.apply(user: @user, node:, op: "symlink")
+
+      entry = Sync::Changes.call(user: @user, since: 0)[:changes].find { |c| c[:node_id] == node.node_id }
+      assert_equal "symlink", entry[:op]
+      assert_equal "symlink", entry[:node][:kind]
+      assert_equal target, Base64.strict_decode64(entry[:node][:symlink_target])
+    end
+
     test "delta respects the limit and is ordered by seq" do
       12.times { |i| commit!(name: "f#{i}.bin") }
 

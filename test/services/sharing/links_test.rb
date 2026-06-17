@@ -11,7 +11,7 @@ class Sharing::LinksTest < ActiveSupport::TestCase
                          current_version_id: @version_id)
     @owner.versions.create!(version_id: @version_id, node_id: @node_id,
                             manifest_id: @manifest_id, size: 150)
-    [["a" * 64, 0, 100], ["b" * 64, 100, 50]].each_with_index do |(h, off, len), seq|
+    [ [ "a" * 64, 0, 100 ], [ "b" * 64, 100, 50 ] ].each_with_index do |(h, off, len), seq|
       ManifestChunk.create!(user_id: @owner.id, manifest_id: @manifest_id, chunk_hash: h,
                             seq:, offset: off, length: len)
       @owner.chunks.create!(chunk_hash: h, size: len, refcount: 1)

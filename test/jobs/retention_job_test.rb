@@ -6,6 +6,15 @@ require "test_helper"
 # nothing (self-host safe); managed sets RETENTION_POLICY=tiered.
 class RetentionJobTest < ActiveSupport::TestCase
   setup do
+    # Freeze at a fixed midday UTC so the tiered policy's calendar day/week/month buckets
+    # are deterministic. The job reads Time.current internally (no injectable `now:`), so we
+    # must freeze the global clock, not pass a time. Otherwise the two ~100-day-old versions
+    # (1 hour apart, in the weekly tier) straddle a UTC midnight when the suite runs near
+    # 00:00 on a date where 100.days.ago lands on a Monday — splitting one ISO-week bucket
+    # into two, so nothing is thinned and the count is 3 instead of 2. Same wall-clock
+    # fragility fixed for gc_test/retention_policy_test in 2e9df94. travel_back auto-runs on
+    # teardown.
+    travel_to Time.utc(2026, 6, 1, 12, 0, 0)
     Storage::ChunkStore.reset!
     @user = User.create!(email: "rj@example.com")
   end

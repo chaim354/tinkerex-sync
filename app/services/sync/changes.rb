@@ -31,8 +31,13 @@ module Sync
         head_seq: user.head_seq,
         # The oldest changelog entry still retained. If a client's cursor is below this,
         # the entries it needs were pruned — it must fall back to a full snapshot
-        # (`SyncEngine::pull_changes` detects the gap and resyncs). 0 when empty.
-        oldest_seq: user.changelog_entries.minimum(:seq) || 0
+        # (`SyncEngine::pull_changes` detects the gap and resyncs).
+        #
+        # When the table is EMPTY (a full prune: keep_after >= head_seq), report head_seq + 1,
+        # NOT 0. Reporting 0 reads to the client as "nothing pruned", so a behind cursor would
+        # silently fast-forward past the pruned entries and diverge. head_seq + 1 sits strictly
+        # above any behind cursor, so the gap is detected and the device full-resyncs.
+        oldest_seq: user.changelog_entries.minimum(:seq) || (user.head_seq + 1)
       }
     end
 

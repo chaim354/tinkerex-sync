@@ -16,8 +16,15 @@ module V1
     end
 
     # POST /v1/commit/:commit_id/finalize
+    # When config.x.verify_finalize is on (SYNC_VERIFY_FINALIZE=1; recommended in production),
+    # confirm the chunk bytes actually landed in storage (a cheap exists?-check for first-seen
+    # hashes only) before creating the immutable version + changelog entry — so a client that
+    # crashes/lies between PUT and finalize can't create a version + chunk rows for bytes that
+    # never arrived (permanent hydration 404s; dedup then reports the phantom chunk "present").
+    # Off by default (see config/initializers/finalize_verification.rb for why).
     def finalize
-      version, seq = Sync::Commit.finalize(user: current_user, commit_id: params[:commit_id])
+      version, seq = Sync::Commit.finalize(user: current_user, commit_id: params[:commit_id],
+                                           verify: Rails.configuration.x.verify_finalize)
       LibraryChannel.broadcast_change(current_user, seq)
       render json: { version_id: version.version_id, seq: }
     rescue Sync::Commit::ChunksMissing => e

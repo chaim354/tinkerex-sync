@@ -17,6 +17,12 @@ module Sync
   class Search
     MAX_LIMIT = 200
 
+    # Hard depth cap on the recursive path walk — defense in depth against a cyclic
+    # parent_node_id chain (which the move/mkdir cycle guard now prevents, but a legacy row
+    # or a future write path could still introduce). Without it a cycle makes the CTE spin
+    # forever (fatal on SQLite: no statement timeout). No real filesystem nests this deep.
+    MAX_DEPTH = 4096
+
     def self.call(user:, query:, include_deleted: false, limit: MAX_LIMIT, offset: 0)
       q = query.to_s.strip
       limit = limit.to_i.clamp(1, MAX_LIMIT)
@@ -44,18 +50,19 @@ module Sync
       off = offset.to_i
       del = include_deleted ? "" : "AND n.deleted = #{quoted_false}"
       bound_pattern = connection.quote(pattern)
+      max_depth = MAX_DEPTH.to_i
       <<~SQL.squish
-        WITH RECURSIVE tree(node_id, name, kind, deleted, current_version_id, path) AS (
+        WITH RECURSIVE tree(node_id, name, kind, deleted, current_version_id, path, depth) AS (
           SELECT n.node_id, n.name, n.kind, n.deleted, n.current_version_id,
-                 '/' || n.name
+                 '/' || n.name, 0
             FROM nodes n
            WHERE n.user_id = #{uid} AND n.parent_node_id IS NULL #{del}
           UNION ALL
           SELECT n.node_id, n.name, n.kind, n.deleted, n.current_version_id,
-                 tree.path || '/' || n.name
+                 tree.path || '/' || n.name, tree.depth + 1
             FROM nodes n
             JOIN tree ON n.parent_node_id = tree.node_id
-           WHERE n.user_id = #{uid} #{del}
+           WHERE n.user_id = #{uid} AND tree.depth < #{max_depth} #{del}
         )
         SELECT tree.node_id, tree.name, tree.kind, tree.path, v.size AS size
           FROM tree

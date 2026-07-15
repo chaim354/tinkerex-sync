@@ -20,6 +20,9 @@ module V1
                      size: 5, manifest: [ { hash:, offset: 0, length: 5 } ] },
            as: :json, headers: auth(token)
       assert_response :success
+      (JSON.parse(response.body)["put_urls"] || {}).each_value do |url|
+        put url, params: "x", headers: { "CONTENT_TYPE" => "application/octet-stream" }
+      end
       post "/v1/commit/#{cid}/finalize", params: {}, as: :json, headers: auth(token)
       assert_response :success
       node_id

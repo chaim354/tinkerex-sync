@@ -20,9 +20,17 @@ module V1
            params: { commit_id: cid, node_id:, parent_node_id: nil, name:, size: 5, manifest: chunks },
            as: :json, headers: auth(token)
       assert_response :success
+      upload_chunks(JSON.parse(response.body))
       post "/v1/commit/#{cid}/finalize", params: {}, as: :json, headers: auth(token)
       assert_response :success
       node_id
+    end
+
+    # PUT each presigned chunk URL so finalize's verify sees the bytes (memory store → /dev/blobs).
+    def upload_chunks(began)
+      (began["put_urls"] || {}).each_value do |url|
+        put url, params: "x", headers: { "CONTENT_TYPE" => "application/octet-stream" }
+      end
     end
 
     test "a user's tree and changelog never expose another user's nodes" do
@@ -80,6 +88,7 @@ module V1
            params: { commit_id: cid, node_id: SecureRandom.uuid, name: "a.bin", size: 5,
                      manifest: [ { hash: ahash, offset: 0, length: 5 } ] },
            as: :json, headers: auth(alice)
+      upload_chunks(JSON.parse(response.body))
       post "/v1/commit/#{cid}/finalize", params: {}, as: :json, headers: auth(alice)
 
       # Bob asks for Alice's hash → no URL minted (he doesn't own that chunk).

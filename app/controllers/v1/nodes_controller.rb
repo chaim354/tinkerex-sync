@@ -3,6 +3,9 @@ module V1
     # POST /v1/nodes  (mkdir)  { node_id, parent_node_id, name }
     def mkdir
       node = current_user.nodes.find_or_initialize_by(node_id: params.require(:node_id))
+      return if reject_kind_change!(node, "dir")
+      # mkdir can re-parent an existing node, so it can wedge the tree the same way move can.
+      return if reject_cycle!(node.node_id, params[:parent_node_id])
       node.assign_attributes(
         parent_node_id: params[:parent_node_id], name: params.require(:name),
         kind: "dir", deleted: false, mode: params[:mode] || node.mode || 0o755,
@@ -19,6 +22,7 @@ module V1
     # so it's a single metadata mutation (like mkdir), op "symlink".
     def symlink
       node = current_user.nodes.find_or_initialize_by(node_id: params.require(:node_id))
+      return if reject_kind_change!(node, "symlink")
       target = params[:symlink_target].present? ? Base64.strict_decode64(params[:symlink_target]) : nil
       node.assign_attributes(
         parent_node_id: params[:parent_node_id], name: params.require(:name),
@@ -32,9 +36,14 @@ module V1
     end
 
     # DELETE /v1/nodes/:node_id   (tombstone; versions retained for restore)
+    # Cascades the tombstone to the WHOLE subtree so the /v1/tree snapshot and the changelog
+    # stay consistent: tombstoning only the parent would leave its descendants `present` in the
+    # snapshot (a device onboarding via /v1/tree would see orphaned children with a dangling
+    # parent), while changelog-following devices delete the whole subtree client-side. Each
+    # affected node gets its own seq + `delete` changelog entry.
     def destroy
       node = current_user.nodes.find_by!(node_id: params[:node_id])
-      seq = Sync::Mutation.apply(user: current_user, node:, op: "delete") { |n| n.deleted = true }
+      seq = Sync::SubtreeDelete.call(user: current_user, node:)
       LibraryChannel.broadcast_change(current_user, seq)
       render json: { seq: }
     end
@@ -42,6 +51,7 @@ module V1
     # POST /v1/nodes/:node_id/move   { new_parent_node_id, new_name }
     def move
       node = current_user.nodes.find_by!(node_id: params[:node_id])
+      return if params.key?(:new_parent_node_id) && reject_cycle!(node.node_id, params[:new_parent_node_id])
       seq = Sync::Mutation.apply(user: current_user, node:, op: "move") do |n|
         n.parent_node_id = params[:new_parent_node_id] if params.key?(:new_parent_node_id)
         n.name = params[:new_name] if params[:new_name].present?
@@ -100,6 +110,45 @@ module V1
         LibraryChannel.broadcast_change(current_user, seq)
         render json: { seq: }
       end
+    end
+
+    private
+
+    # Render 422 + true when re-parenting `node_id` under `new_parent_id` would create a cycle
+    # (the new parent IS the node, or is one of the node's descendants). An uncaught cycle makes
+    # the WITH RECURSIVE search CTE spin unboundedly (fatal on SQLite — no statement timeout).
+    # Returns false (no cycle) so the caller proceeds.
+    def reject_cycle!(node_id, new_parent_id)
+      return false unless would_create_cycle?(node_id, new_parent_id)
+      render json: { error: "move would create a cycle" }, status: :unprocessable_entity
+      true
+    end
+
+    # A move/re-parent is a cycle iff the target parent is the node itself, or the node appears
+    # in the target parent's ancestor chain (i.e. the target parent is a descendant of the node).
+    # Walk UP from new_parent to the root; a `seen` guard bounds the walk even if the stored tree
+    # is already corrupt.
+    def would_create_cycle?(node_id, new_parent_id)
+      return false if new_parent_id.blank?
+      return true if new_parent_id == node_id
+      seen = {}
+      current = new_parent_id
+      while current.present? && !seen[current]
+        return true if current == node_id
+        seen[current] = true
+        current = current_user.nodes.where(node_id: current).pick(:parent_node_id)
+      end
+      false
+    end
+
+    # Render 409 + true when a mutation would change an EXISTING node's kind (file↔dir↔symlink) —
+    # that would orphan the node's versions/children under a mismatched kind. Only guards a
+    # persisted node whose kind differs; a brand-new node (or a same-kind no-op) proceeds.
+    def reject_kind_change!(node, new_kind)
+      return false unless node.persisted? && node.kind != new_kind
+      render json: { error: "node #{node.node_id} already exists as a #{node.kind}, cannot become a #{new_kind}" },
+             status: :conflict
+      true
     end
   end
 end

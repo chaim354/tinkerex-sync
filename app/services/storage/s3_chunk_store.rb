@@ -39,6 +39,12 @@ module Storage
       false
     end
 
+    def last_modified(user_id, hash)
+      @client.head_object(bucket: @bucket, key: key_for(user_id, hash)).last_modified
+    rescue Aws::S3::Errors::NotFound, Aws::S3::Errors::NoSuchKey
+      nil
+    end
+
     # Enumerate chunks/<user_id>/ for the storage-orphan reaper. Paginates list_objects_v2
     # (1000 keys/page) over the per-user prefix; returns { hash:, last_modified: } for each.
     # The hash is the key suffix after the prefix; last_modified is S3's object timestamp,

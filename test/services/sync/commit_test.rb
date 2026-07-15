@@ -63,7 +63,7 @@ module Sync
     end
 
     test "refcounts: shared chunk increments, new chunk starts at 1" do
-      x, y, z = "x" * 64, "y" * 64, "z" * 64
+      x, y, z = "e" * 64, "f" * 64, "1" * 64
       commit!(name: "a", node_id: SecureRandom.uuid,
               chunks: [ { "hash" => x, "offset" => 0, "length" => 5 }, { "hash" => y, "offset" => 5, "length" => 5 } ])
       commit!(name: "b", node_id: SecureRandom.uuid,
@@ -96,6 +96,65 @@ module Sync
     test "next_seq! is monotonic across commits" do
       3.times { |i| commit!(name: "f#{i}", node_id: SecureRandom.uuid, chunks: [ { "hash" => (i.to_s * 64)[0, 64], "offset" => 0, "length" => 1 } ]) }
       assert_equal [ 1, 2, 3 ], @user.changelog_entries.order(:seq).pluck(:seq)
+    end
+
+    # ---- Fix 1: chunk-hash format validation (security) -----------------------
+
+    test "begin rejects a path-traversal chunk hash (would escape the per-user prefix)" do
+      err = assert_raises(Sync::Commit::InvalidManifest) do
+        Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                           node_id: SecureRandom.uuid, parent_node_id: nil, name: "evil.bin",
+                           base_version_id: nil, size: 5,
+                           manifest: [ { "hash" => "../7/deadbeef", "offset" => 0, "length" => 5 } ])
+      end
+      assert_match(/invalid chunk hash/, err.message)
+      assert_equal 0, @user.pending_commits.count, "no pending row created for a poisoned commit"
+    end
+
+    test "begin rejects a non-64-hex junk hash" do
+      assert_raises(Sync::Commit::InvalidManifest) do
+        Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                           node_id: SecureRandom.uuid, parent_node_id: nil, name: "j.bin",
+                           base_version_id: nil, size: 5,
+                           manifest: [ { "hash" => "NOTAHASH", "offset" => 0, "length" => 5 } ])
+      end
+    end
+
+    test "begin accepts a valid 64-hex hash (regression: the happy path still works)" do
+      good = "a" * 64
+      res = Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                               node_id: SecureRandom.uuid, parent_node_id: nil, name: "ok.bin",
+                               base_version_id: nil, size: 5,
+                               manifest: [ { "hash" => good, "offset" => 0, "length" => 5 } ])
+      assert_includes res.missing, good
+    end
+
+    # ---- Fix 10: manifest length cap -----------------------------------------
+
+    test "begin rejects an over-cap manifest" do
+      big = (Sync::Commit::MAX_MANIFEST_CHUNKS + 1).times.map { |i|
+        { "hash" => "a" * 64, "offset" => i, "length" => 1 }
+      }
+      assert_raises(Sync::Commit::InvalidManifest) do
+        Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                           node_id: SecureRandom.uuid, parent_node_id: nil, name: "huge.bin",
+                           base_version_id: nil, size: big.size, manifest: big)
+      end
+    end
+
+    # ---- Fix 8: kind-change guard --------------------------------------------
+
+    test "finalize refuses to turn an existing dir into a file (kind change)" do
+      nid = SecureRandom.uuid
+      dir = @user.nodes.create!(node_id: nid, name: "adir", kind: "dir", deleted: false)
+      cid = SecureRandom.uuid
+      Sync::Commit.begin(user: @user, device: @device, commit_id: cid, node_id: nid,
+                         parent_node_id: nil, name: "adir", base_version_id: nil, size: 5,
+                         manifest: [ { "hash" => "a" * 64, "offset" => 0, "length" => 5 } ])
+      assert_raises(Sync::Commit::KindConflict) do
+        Sync::Commit.finalize(user: @user, commit_id: cid)
+      end
+      assert_equal "dir", dir.reload.kind, "the dir is untouched"
     end
   end
 end

@@ -9,6 +9,18 @@ module Sync
   class Commit
     Result = Struct.new(:commit_id, :missing, :put_urls, keyword_init: true)
 
+    # A chunk hash is a lowercase hex SHA-256 — exactly 64 hex chars. This is the ONLY
+    # shape a client-supplied hash may take before it becomes a storage key
+    # (chunks/<user>/<hash>) or a DB row. Rejecting anything else at the door prevents a
+    # crafted hash like "../7/deadbeef" from escaping the per-user prefix on a path-based
+    # S3 gateway (cross-tenant read/write) and prevents junk keys the reaper can't reclaim.
+    HASH_RE = /\A[0-9a-f]{64}\z/
+
+    # Upper bound on manifest size (chunks per commit) — clamps a memory/DB DoS from an
+    # over-large manifest, mirroring the tree/changes endpoints' pagination caps. A 100k-chunk
+    # manifest at the ~1 MiB avg FastCDC target is a ~100 GiB file; far past any real payload.
+    MAX_MANIFEST_CHUNKS = 100_000
+
     class ChunksMissing < StandardError
       attr_reader :hashes
       def initialize(hashes)
@@ -17,12 +29,29 @@ module Sync
       end
     end
 
+    # Raised when a commit's manifest is malformed — a chunk hash that isn't a 64-hex
+    # SHA-256, or a manifest past MAX_MANIFEST_CHUNKS. The whole commit is rejected (422)
+    # rather than silently accepting a poisoned hash into the keyspace.
+    class InvalidManifest < StandardError; end
+
+    # Raised when finalizing a content commit onto a node_id that already exists as a NON-file
+    # (dir/symlink). Silently flipping its kind to "file" would orphan its children/target;
+    # reject with 409 instead.
+    class KindConflict < StandardError; end
+
     # ---- Phase 1 -------------------------------------------------------------
     def self.begin(user:, device:, commit_id:, node_id:, parent_node_id:, name:,
                    base_version_id:, size:, manifest:, mode: nil, mtime: nil)
       manifest = normalize(manifest)
+      if manifest.size > MAX_MANIFEST_CHUNKS
+        raise InvalidManifest, "manifest too large (#{manifest.size} > #{MAX_MANIFEST_CHUNKS})"
+      end
       manifest_id = manifest_id_for(manifest)
       hashes = manifest.map { |c| c["hash"] }.uniq
+      bad = hashes.reject { |h| h.is_a?(String) && HASH_RE.match?(h) }
+      if bad.any?
+        raise InvalidManifest, "invalid chunk hash(es): #{bad.first(3).map(&:inspect).join(', ')}"
+      end
 
       pending = user.pending_commits.find_or_initialize_by(commit_id:)
       pending.assign_attributes(
@@ -69,6 +98,11 @@ module Sync
         upsert_chunks!(user, manifest)
 
         node = user.nodes.find_or_initialize_by(node_id: pending.node_id)
+        # A content commit produces a file. Refuse to change an existing dir/symlink into a file
+        # (would orphan its children/target). A brand-new node, or one already a file, is fine.
+        if node.persisted? && node.kind != "file"
+          raise KindConflict, "node #{pending.node_id} already exists as a #{node.kind}, cannot become a file"
+        end
         prior_current = node.current_version_id
         node.assign_attributes(
           parent_node_id: pending.parent_node_id, name: pending.name,

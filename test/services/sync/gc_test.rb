@@ -194,5 +194,48 @@ module Sync
       assert_not Storage::ChunkStore.current.exists?(@user.id, pruned_hash),
                  "refcount-0 chunk deleted from storage"
     end
+
+    # ---- Fix 3: retention never prunes a version an open conflict or live share link needs ----
+
+    test "tiered retention keeps a version referenced by an unresolved conflict, and it stays resolvable" do
+      nid = SecureRandom.uuid
+      # A same-day pair the tiered policy would otherwise thin (keeps newest, prunes the older).
+      vs = make_history!(node_id: nid, ages: [ 1.minute, 5.days, 5.days + 1.hour ])
+      would_prune = vs.min_by(&:created_at) # the 5d+1h version — normally thinned
+      current = vs.max_by(&:created_at)
+
+      # Record an unresolved conflict whose INCOMING side is the would-be-pruned version.
+      @user.conflicts.create!(node_id: nid, incoming_version_id: would_prune.version_id,
+                              current_version_id: current.version_id)
+
+      Sync::Gc.apply_retention!(@user, policy: Sync::RetentionPolicy.for(mode: "tiered"), grace: 0)
+
+      assert @user.versions.find_by(version_id: would_prune.version_id),
+             "a version referenced by an open conflict must not be pruned"
+      assert @user.chunks.find_by(chunk_hash: would_prune.manifest_chunks.first.chunk_hash),
+             "its chunks survive too (resolution needs them)"
+
+      # And it is still resolvable afterward (keep that side).
+      assert_nothing_raised do
+        Sync::Conflicts.keep(user: @user, node_id: nid, version_id: would_prune.version_id)
+      end
+    end
+
+    test "tiered retention keeps a version referenced by a live share link" do
+      nid = SecureRandom.uuid
+      vs = make_history!(node_id: nid, ages: [ 1.minute, 5.days, 5.days + 1.hour ])
+      shared = vs.min_by(&:created_at) # would be thinned
+
+      @user.share_links.create!(node_id: nid, version_id: shared.version_id,
+                                manifest_id: shared.manifest_id,
+                                token_digest: ShareLink.digest(SecureRandom.hex(16)))
+
+      Sync::Gc.apply_retention!(@user, policy: Sync::RetentionPolicy.for(mode: "tiered"), grace: 0)
+
+      assert @user.versions.find_by(version_id: shared.version_id),
+             "a live share link's frozen version must not be pruned"
+      assert Storage::ChunkStore.current.exists?(@user.id, shared.manifest_chunks.first.chunk_hash),
+             "its chunks survive (presigned GETs would otherwise dangle)"
+    end
   end
 end

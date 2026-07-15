@@ -39,7 +39,12 @@ module Sync
                          manifest: chunks)
       chunks.each { |c| @store.put!(@user.id, c["hash"], "bytes") }
       pc = @user.pending_commits.find_by!(commit_id: cid)
-      pc.update_column(:created_at, age.ago) if age.positive?
+      if age.positive?
+        pc.update_column(:created_at, age.ago)
+        # The uploaded objects are as old as the abandoned commit — backdate their storage age
+        # so the reaper's object-age guard treats them as stale, not a fresh re-upload.
+        chunks.each { |c| @store.set_mtime!(@user.id, c["hash"], age.ago) }
+      end
       pc
     end
 
@@ -148,6 +153,22 @@ module Sync
       assert_nil PendingCommit.find_by(id: pc.id), "row still destroyed despite a storage error"
     end
 
+    # ---- storage-age guard: a freshly RE-uploaded object is spared ------------------
+
+    test "spares a chunk whose storage object is newer than the cutoff (a fresh re-upload)" do
+      a = hex
+      pc = pending!(chunks: [ chunk(a) ], age: 25.hours)
+      # Simulate a concurrent commit having just re-uploaded the same content-addressed chunk:
+      # the pending row is old, but the OBJECT is fresh (mtime = now).
+      @store.set_mtime!(@user.id, a, Time.current)
+
+      reaped = Sync::PendingCommitReaper.reap!(@user, ttl: 24.hours)
+
+      assert_not_includes reaped, a, "a fresh object must not be reaped (may be a live re-upload)"
+      assert @store.exists?(@user.id, a), "the freshly re-uploaded object is kept"
+      assert_nil PendingCommit.find_by(id: pc.id), "the expired pending row is still destroyed"
+    end
+
     # ---- per-user scoping: never crosses tenants ------------------------------------
 
     test "is scoped per user — never reaps another user's chunk" do
@@ -180,6 +201,7 @@ module Sync
                          manifest: [ chunk(h2) ])
       @store.put!(u2.id, h2, "bytes")
       u2.pending_commits.find_by!(commit_id: cid2).update_column(:created_at, 25.hours.ago)
+      @store.set_mtime!(u2.id, h2, 25.hours.ago)
 
       total = Sync::PendingCommitReaper.reap_all!(ttl: 24.hours)
 

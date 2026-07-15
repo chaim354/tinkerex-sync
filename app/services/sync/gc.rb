@@ -17,6 +17,13 @@ module Sync
     # retention policy (keep last N / daily-for-30d) — NOT in the normal write path.
     def self.prune_version!(user, version)
       ApplicationRecord.transaction do
+        # Serialize against the seq-writers (Sync::Commit/Restore/Conflicts all take the user-row
+        # lock first). Without this, a concurrent Restore/split that bumps THIS version's chunks'
+        # refcounts can interleave with our decrement-then-destroy: the restore reuses the manifest
+        # while we're zeroing its refcounts, and sweep_orphans! could then free a chunk a live
+        # version references. Taking the same FOR UPDATE lock makes prune and the bumpers mutually
+        # exclusive per user.
+        user.lock!
         hashes = ManifestChunk
                  .where(user_id: user.id, manifest_id: version.manifest_id)
                  .distinct.pluck(:chunk_hash)
@@ -37,19 +44,38 @@ module Sync
     # RETENTION_POLICY=tiered) for managed thinning. Returns the number of versions pruned.
     def self.apply_retention!(user, policy: RetentionPolicy.default, grace: 1.hour)
       pruned = 0
+      # Versions still referenced by an UNRESOLVED conflict or a LIVE share link must never be
+      # pruned, regardless of the retention tier math:
+      #   - an open conflict's incoming/base version: Sync::Conflicts.keep/split re-reads it to
+      #     resolve — pruning it makes resolution raise (500) and loses the edit's chunks,
+      #     breaking the "never lose an edit" invariant.
+      #   - a live share link's frozen version: presigned GETs against its manifest would dangle.
+      referenced = referenced_version_ids(user)
       node_ids = user.versions.distinct.pluck(:node_id)
       node_ids.each do |node_id|
         node = user.nodes.find_by(node_id:)
         versions = user.versions.where(node_id:).to_a
         keep = policy.keep_set(versions, current_version_id: node&.current_version_id)
         versions.each do |v|
-          next if keep.include?(v.version_id)
+          next if keep.include?(v.version_id) || referenced.include?(v.version_id)
           prune_version!(user, v)
           pruned += 1
         end
       end
       sweep_orphans!(user, grace:)
       pruned
+    end
+
+    # Every version_id a retention pass must protect beyond the policy keep-set: both sides of
+    # each unresolved conflict (incoming + base/current) and every live share link's version.
+    def self.referenced_version_ids(user)
+      ids = Set.new
+      user.conflicts.unresolved.pluck(:incoming_version_id, :current_version_id).each do |inc, cur|
+        ids << inc if inc.present?
+        ids << cur if cur.present?
+      end
+      user.share_links.each { |sl| ids << sl.version_id if sl.live? && sl.version_id.present? }
+      ids
     end
 
     # Prune changelog history at or below `keep_after`, leaving the tree + versions

@@ -8,8 +8,22 @@ module V1
     # can't be retargeted) — cross-user access is impossible regardless — but this also
     # refuses to mint URLs for hashes the user doesn't reference, so a token can't fish
     # for arbitrary keys.
+    # Cap the batch size so a single request can't ask us to mint (and DB-lookup) an
+    # unbounded number of URLs — a memory/DB DoS, mirroring the tree/changes pagination caps.
+    MAX_DOWNLOAD_HASHES = 10_000
+
     def download
       hashes = Array(params[:hashes]).map(&:to_s).uniq
+      if hashes.size > MAX_DOWNLOAD_HASHES
+        render json: { error: "too many hashes (#{hashes.size} > #{MAX_DOWNLOAD_HASHES})" },
+               status: :unprocessable_entity
+        return
+      end
+      # Only ever presign a well-formed hash (64-hex SHA-256). A malformed hash could never
+      # be `owned` (DB hashes are all valid), but validating here refuses to even build a
+      # storage key from client-controlled junk — defense in depth against a path-traversal
+      # key on a path-based S3 gateway.
+      hashes = hashes.select { |h| Sync::Commit::HASH_RE.match?(h) }
       owned = current_user.chunks.where(chunk_hash: hashes).pluck(:chunk_hash).to_set
       store = Storage::ChunkStore.current
       urls = hashes.index_with { |h| owned.include?(h) ? store.presign_get(current_user.id, h) : nil }.compact

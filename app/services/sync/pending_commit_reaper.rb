@@ -75,6 +75,14 @@ module Sync
         next if committed.include?(hash)     # dedup: a committed version owns it
         next if live_pending.include?(hash)  # a still-live pending is about to finalize it
 
+        # Storage-age guard (mirrors Sync::ChunkReaper): a chunk this expired commit uploaded may
+        # have just been RE-uploaded by a fresh commit (content-addressed → same key) whose
+        # begin/finalize hasn't shown up in the committed/live_pending snapshots yet (TOCTOU).
+        # If the OBJECT is newer than the expiry cutoff, it's live — skip it. Backends that can't
+        # cheaply stat one object return nil → guard is a no-op there (same as ChunkReaper's).
+        lm = store.last_modified(user.id, hash)
+        next if lm && lm > cutoff
+
         reaped << hash
         next if dry_run
 

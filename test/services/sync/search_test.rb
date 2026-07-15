@@ -123,5 +123,21 @@ module Sync
       assert_empty Sync::Search.call(user: @user, query: "")[:results]
       assert_empty Sync::Search.call(user: @user, query: "   ")[:results]
     end
+
+    # ---- Fix 2 (defense in depth): the recursive CTE terminates on a cyclic tree ----
+
+    test "search terminates (depth-capped) even if the stored tree contains a cycle" do
+      # The move/mkdir guards now prevent creating a cycle via the API, but a legacy row
+      # could still hold one. Craft one directly: a <-> b point at each other. Without the
+      # depth cap the WITH RECURSIVE walk would spin forever (fatal on SQLite).
+      a = SecureRandom.uuid
+      b = SecureRandom.uuid
+      @user.nodes.create!(node_id: a, parent_node_id: b, name: "cyclic-a", kind: "dir")
+      @user.nodes.create!(node_id: b, parent_node_id: a, name: "cyclic-b", kind: "dir")
+
+      # Must return promptly (Timeout guards against a hang → a red test instead of a stuck CI).
+      result = Timeout.timeout(20) { Sync::Search.call(user: @user, query: "cyclic") }
+      assert_kind_of Array, result[:results]
+    end
   end
 end

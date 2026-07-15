@@ -16,6 +16,12 @@ module Sync
         lock.save!
       end
       status(user, lock.reload, device)
+    rescue ActiveRecord::RecordNotUnique
+      # Two devices raced to CREATE the lock for the same node_id (the unique index rejected the
+      # loser's INSERT). That's benign: the row now exists. Re-read it and report status — the
+      # loser simply didn't win the lock this round, exactly as if the other device held it.
+      lock = user.file_locks.find_by(node_id:)
+      lock ? status(user, lock, device) : { node_id:, held: false }
     end
 
     def self.release(user:, node_id:, device:)

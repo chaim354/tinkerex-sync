@@ -33,6 +33,12 @@ module Storage
     def presign_get(_user_id, _hash, expires_in: 3600) = raise(NotImplementedError)
     def exists?(_user_id, _hash) = raise(NotImplementedError)
 
+    # The storage age (last-modified Time) of a single object, or nil if absent/unsupported.
+    # Lets a targeted reaper (Sync::PendingCommitReaper) apply the same grace-window guard the
+    # list-based Sync::ChunkReaper gets from `list`, without a full keyspace enumeration. The
+    # base returns nil so a backend that can't cheaply stat one object just skips the guard.
+    def last_modified(_user_id, _hash) = nil
+
     # Enumerate the objects under chunks/<user_id>/ — the keyspace a single tenant owns.
     # Returns an array of { hash:, last_modified: } (last_modified a Time). Used by the
     # storage-orphan reaper (Sync::ChunkReaper) to find keys with no DB row. Concrete

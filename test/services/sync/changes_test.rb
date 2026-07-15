@@ -82,5 +82,18 @@ module Sync
       assert_equal ids.to_set, snap_ids.to_set, "every node still reachable via the snapshot after a full prune"
       assert_equal 6, @user.reload.head_seq, "head_seq is retained even when history is gone"
     end
+
+    # ---- Fix 5: a FULLY pruned changelog must still signal the gap -------------
+
+    test "oldest_seq is head_seq+1 (not 0) after a full prune so a behind cursor detects the gap" do
+      6.times { |i| commit!(name: "f#{i}.bin") }
+      Sync::Gc.prune_changelog!(@user, keep_after: 6) # empties the table
+
+      page = Sync::Changes.call(user: @user, since: 0, limit: 100)
+      assert_empty page[:changes], "no entries remain"
+      assert_equal 7, page[:oldest_seq], "empty table reports head_seq+1, NOT 0"
+      # The client compares its cursor (0) against oldest_seq; > cursor+1 means a gap → full resync.
+      assert_operator page[:oldest_seq], :>, 1, "a behind cursor (0) is below the floor → gap detected"
+    end
   end
 end

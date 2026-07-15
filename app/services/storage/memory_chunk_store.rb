@@ -51,6 +51,11 @@ module Storage
       File.exist?(path_for(user_id, hash))
     end
 
+    def last_modified(user_id, hash)
+      p = path_for(user_id, hash)
+      File.exist?(p) ? File.mtime(p) : nil
+    end
+
     # Idempotent: deleting an absent key is a no-op (mirrors S3's delete semantics).
     def delete(user_id, hash)
       FileUtils.rm_f(path_for(user_id, hash))

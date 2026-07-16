@@ -11,8 +11,7 @@ module FileLayer
     end
 
     def stat(user, node_id:)
-      node = user.nodes.present.find_by(node_id:)
-      raise NotFound, "no node #{node_id.inspect}" unless node
+      node = live_node!(user, node_id)
 
       FileInfo.new(
         node_id: node.node_id,
@@ -25,11 +24,19 @@ module FileLayer
     end
 
     def read(user, node_id:, content_token: nil)
+      # A tombstoned node is GONE on every backend (contract:
+      # test_contract_read_raises_not_found_for_a_deleted_node). Checked BEFORE resolving the
+      # version, and OUTSIDE the branch below, because the by-token path queries `versions` and
+      # would otherwise never consult `nodes` at all — leaving the asymmetry inside this very
+      # method, on the path every production caller actually uses (contract:
+      # test_contract_read_at_a_token_captured_before_deletion_raises_not_found).
+      node = live_node!(user, node_id)
+
       version =
         if content_token.present?
           user.versions.find_by(node_id:, version_id: content_token)
         else
-          user.nodes.find_by(node_id:)&.current_version
+          node.current_version
         end
       raise NotFound, "no version for node #{node_id.inspect}" unless version
 
@@ -79,6 +86,21 @@ module FileLayer
       require "open-uri"
       require "net/http"
       URI.parse(url).open(&:read)
+    end
+
+    # NOTE: only affects the instance methods below; `def self.` methods above stay public.
+    private
+
+    # The liveness guard both stat and read must apply. Shared rather than duplicated because
+    # stat and read answering DIFFERENTLY for the same node is precisely the bug this closes
+    # (§9a-1) — one copy means they cannot drift apart again.
+    #
+    # The message avoids internal jargon and does not distinguish deleted from never-existed:
+    # it reaches end users through preview.error (rendered into the previews API JSON), and to
+    # a caller holding a node_id the two states are the same answer — the file isn't there.
+    def live_node!(user, node_id)
+      user.nodes.present.find_by(node_id:) ||
+        raise(NotFound, "node #{node_id.inspect} is deleted or does not exist")
     end
   end
 end

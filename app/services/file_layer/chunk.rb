@@ -6,6 +6,24 @@ module FileLayer
   # Runs server-side (preview jobs), so it reads chunks directly rather than via presigned
   # URLs where the store allows it.
   class Chunk
+    # One message per op, NOT one shared string: these are three different doors. A shared
+    # constant is what made an earlier draft of this class tell delete/move callers to use
+    # Sync::Commit, which has no delete or move path at all.
+    WRITE_MSG = "chunk-mode writes go through the sync engine (Sync::Commit's two-phase " \
+                "commit), not through FileLayer".freeze
+
+    # Sync::SubtreeDelete, NOT Sync::Mutation.apply(op: "delete"): the latter tombstones only
+    # the node it is given, so on a directory it orphans the descendants — /v1/tree would serve
+    # children pointing at a deleted parent while changelog-following devices dropped the whole
+    # subtree (see Sync::SubtreeDelete's header). SubtreeDelete is the safe superset: on a
+    # childless file it collects exactly one node and does the identical single tombstone, which
+    # is why it is the right answer to give a caller who has not told us which kind they hold.
+    DELETE_MSG = "chunk-mode delete goes through the sync engine (Sync::SubtreeDelete.call, " \
+                 "which cascades the tombstone to the subtree), not through FileLayer".freeze
+
+    MOVE_MSG = 'chunk-mode move goes through the sync engine (Sync::Mutation.apply, op: "move"), ' \
+               "not through FileLayer".freeze
+
     def capabilities
       Capabilities.new(versioned: true, syncable: true, presignable: true)
     end
@@ -49,6 +67,32 @@ module FileLayer
         raise NotFound, "file exceeds #{MAX_BYTES} bytes" if buf.bytesize > MAX_BYTES
       end
       buf
+    end
+
+    # The port's write path is share/s3 only. Chunk-mode mutations are the sync engine's, and
+    # each has its own door (see the constants above). Implementing them here would mean a
+    # server-side chunk-and-commit path that duplicates Sync::Commit, has no caller, and
+    # reaches into the sync engine this port exists to stay out of (spec §10).
+    #
+    # They exist, rather than being absent, so the answer is an honest error instead of a
+    # NoMethodError that reads as an oversight — which only holds if each error names the door
+    # that op actually uses. A confident wrong answer is worse than NoMethodError: NoMethodError
+    # sends you to the code, a wrong class name sends you to the wrong file.
+    #
+    # The keyword names are the port's intended shape and are documentary: a reader sees exactly
+    # which call is being refused. The defaults are deliberate too — a caller who omits one gets
+    # this explanation rather than an ArgumentError about a missing keyword, which would hide the
+    # real answer.
+    def write(_user, parent_node_id: nil, name: nil, io: nil)
+      raise NotImplementedError, WRITE_MSG
+    end
+
+    def delete(_user, node_id: nil)
+      raise NotImplementedError, DELETE_MSG
+    end
+
+    def move(_user, node_id: nil, new_parent_node_id: nil, new_name: nil)
+      raise NotImplementedError, MOVE_MSG
     end
 
     # Normalize over the chunk-store backends.

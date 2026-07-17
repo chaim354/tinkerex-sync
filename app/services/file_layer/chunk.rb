@@ -79,6 +79,65 @@ module FileLayer
       buf
     end
 
+    # Hand the browser this file's bytes. FilesController#blob's behavior, moved behind the port
+    # UNCHANGED — including the single-chunk redirect, which is not an optimization to tidy up
+    # but the one place chunk mode keeps §15 for a web download.
+    #
+    # `disposition:`/`content_type:` are the CONTROLLER'S policy (SAFE_INLINE_TYPES: which types
+    # may render inline in our origin, and ?download=1). Chunk's Stream does not apply them —
+    # the controller sets those headers itself, exactly as #blob does today — but the port's
+    # signature carries them because S3's Redirect must SIGN them into the URL at mint time, and
+    # a redirect that dropped them would serve an SVG executable from the bucket's origin while
+    # the same button on the same UI attached it here. See Delivery.
+    #
+    # NOT read's job and not read's rules: `download` never buffers, so MAX_BYTES (a
+    # host-protection cap on holding a whole file in memory) does not apply. The enumerator is
+    # LAZY — that is what keeps a 2GB file off the Rails heap.
+    #
+    # `disposition:` is REQUIRED even though this adapter never reads it — the port has ONE
+    # signature, and a caller who may omit it here but not on S3 learns the rule from whichever
+    # backend they developed against. See S3#download: omitting it there silently mints a signed
+    # header with no disposition type, which browsers resolve as inline.
+    def download(user, node_id:, disposition:, content_type: nil)
+      # The same liveness guard read applies: a tombstoned node is GONE on every backend, and
+      # download must not be the hole in that.
+      node = live_node!(user, node_id)
+      version = node.current_version
+      raise NotFound, "no version for node #{node_id.inspect}" unless version
+
+      chunks = version.manifest_chunks.to_a
+      store = Storage::ChunkStore.current
+
+      # BOTH HALVES OF THIS CONDITION ARE LOAD-BEARING, and neither is the presignable? question.
+      #
+      # `is_a?(S3ChunkStore)` — do NOT rewrite this as `capabilities.presignable?`. Verified: all
+      # three chunk stores implement presign_get, but the memory and local stores presign to URLs
+      # RAILS ITSELF SERVES, so redirecting to one would send the browser on a pointless round
+      # trip back through us — the opposite of what the redirect is for. "Can this store presign?"
+      # and "does its URL point off-box?" are different questions, and only the second belongs
+      # here. §9a-3/§9a-4's cleanup of the presignable/duck-typing split is real and stays
+      # deferred; this is why Phase 4 does not force it.
+      #
+      # `chunks.size == 1` — a redirect can only ever name ONE object. Redirecting a multi-chunk
+      # file hands the browser its first chunk with a 200 and the right filename: silent
+      # truncation, no error anywhere.
+      if chunks.size == 1 && store.is_a?(Storage::S3ChunkStore)
+        return Delivery::Redirect.new(url: store.presign_get(user.id, chunks.first.chunk_hash))
+      end
+
+      Delivery::Stream.new(enum: Enumerator.new do |y|
+        chunks.each do |mc|
+          bytes = self.class.fetch(store, user.id, mc.chunk_hash)
+          # nil is "genuinely absent" (a 404 from the presigned GET) — the same terminal answer
+          # read gives it. #blob used `|| ""` for the memory store, which silently served a file
+          # with a hole in it; the enumerator raising is loud, and by here the response has
+          # already begun, so quiet corruption is the one outcome worth refusing.
+          raise NotFound, "missing chunk #{mc.chunk_hash}" if bytes.nil?
+          y << bytes
+        end
+      end)
+    end
+
     # The port's write path is share/s3 only. Chunk-mode mutations are the sync engine's, and
     # each has its own door (see the constants above). Implementing them here would mean a
     # server-side chunk-and-commit path that duplicates Sync::Commit, has no caller, and

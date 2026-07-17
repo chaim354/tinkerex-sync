@@ -1,5 +1,11 @@
 module V1
   class ChunksController < BaseController
+    # Hydration presigns CHUNKS, which only a chunk-mode library has -- so the gate is `syncable`
+    # and emphatically NOT `presignable`. S3 answers presignable: TRUE (that is the whole point of
+    # FileLayer::S3::Redirect) while having no chunk to hydrate, so gating on presignable here
+    # would leave this endpoint open on s3, minting nothing and explaining nothing.
+    require_capability! :syncable
+
     # POST /v1/chunks/download { hashes: [...] } -> { urls: { hash => presigned GET } }
     # Hydration: the client requests presigned GETs for the chunks it needs.
     #

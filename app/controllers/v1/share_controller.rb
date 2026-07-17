@@ -8,6 +8,15 @@ module V1
   # Invariants preserved: bytes never flow through Rails (presigned GETs only), the minted
   # URLs are scoped to exactly this version's manifest chunks under the OWNER's keyspace, and
   # a revoked/expired link mints nothing on the next request.
+  #
+  # NOT capability-gated, while its owner-side counterpart (V1::ShareLinksController) is, and the
+  # asymmetry is the decision rather than an oversight. Two reasons, either sufficient:
+  #   - The caller here is ANONYMOUS -- the token is the auth. A 501 would tell any stranger
+  #     holding any string which backend this deployment runs. 404 tells them what they need to
+  #     know, which is nothing.
+  #   - The 404 is already honest and already terminal. No link can be minted on an unversioned
+  #     deployment (that is the gate on the owner side), so redeem! finds nothing and says so.
+  #     "That token isn't valid" is exactly true, in every mode.
   class ShareController < ActionController::API
     rescue_from ActionController::ParameterMissing, with: -> { head :bad_request }
     before_action :stash_request_base_url

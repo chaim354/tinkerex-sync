@@ -1,5 +1,8 @@
 module V1
   class TreeController < BaseController
+    # The initial-sync snapshot a device pairs with. Nothing syncs a share/s3 library.
+    require_capability! :syncable
+
     # GET /v1/tree?after_id=<id>&limit=<n>  (initial-sync snapshot, paginated)
     def index
       data = Sync::Tree.call(

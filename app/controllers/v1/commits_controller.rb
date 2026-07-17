@@ -1,5 +1,8 @@
 module V1
   class CommitsController < BaseController
+    # The two-phase content commit: the sync engine's write path, chunks and all.
+    require_capability! :syncable
+
     # POST /v1/commit
     # body: { commit_id, node_id, parent_node_id, name, base_version_id, size,
     #         manifest: [{ hash, offset, length }, ...] }

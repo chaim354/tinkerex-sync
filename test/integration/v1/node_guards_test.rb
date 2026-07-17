@@ -9,7 +9,13 @@ module V1
   #   - malformed / over-cap chunk hashes rejected
   #   - benign-but-invalid input renders 4xx, never 500
   class NodeGuardsTest < ActionDispatch::IntegrationTest
-    setup { Storage::ChunkStore.reset! }
+    # Guards on the sync engine's own mutation surface, which is chunk-mode only (spec §3.3) as of
+    # Phase 4 Task 7's gate. Pinned, not rewritten: every assertion below is still exactly right
+    # about the deployment it was always describing.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
 
     def auth(token) = { "Authorization" => "Bearer #{token}" }
 

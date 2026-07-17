@@ -1,5 +1,17 @@
 module V1
   class NodesController < BaseController
+    # THE HEADLINE 501. Before this gate, #versions answered `{versions: []}` in share mode --
+    # "this file has no history", which is a lie: it has none because THIS DEPLOYMENT has none.
+    # An empty list tells a client the file is fine and unversioned and invites it to carry on;
+    # 501 tells it the truth. #restore is the same fact with an action attached.
+    require_capability! :versioned, only: %i[versions restore]
+
+    # Everything else here is the sync engine's metadata mutation surface (Sync::Mutation /
+    # Sync::SubtreeDelete / Sync::Locks / Sync::Conflicts), not the port's. A share/s3 library
+    # mutates through FileLayer#write/#delete/#move -- the tree is a reflection of the store,
+    # and writing to the reflection would be undone by the next scan.
+    require_capability! :syncable, only: %i[mkdir symlink destroy move lock unlock resolve_conflict]
+
     # POST /v1/nodes  (mkdir)  { node_id, parent_node_id, name }
     def mkdir
       node = current_user.nodes.find_or_initialize_by(node_id: params.require(:node_id))

@@ -5,7 +5,14 @@ module V1
   # un-tombstones + appends a changelog entry so other devices converge), and
   # cross-user isolation (you can't see or restore another user's trash).
   class TrashFlowTest < ActionDispatch::IntegrationTest
-    setup { Storage::ChunkStore.reset! }
+    # THE CHUNK TRASH, which is the only thing this controller ever was: a tombstone whose versions
+    # are kept, restored by re-pointing at one. A share/s3 library's trash is a different mechanism
+    # (2b: bytes to `.trash/<node_id>/`, recovered via FileLayer#undelete) and is not exposed here,
+    # so Phase 4 Task 7 gates this surface on `syncable` and this suite says which trash it means.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
 
     def register(email:, name: "laptop")
       bootstrap_token(email: email, device_name: name)

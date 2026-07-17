@@ -25,7 +25,11 @@ module FileLayer
                "not through FileLayer".freeze
 
     def capabilities
-      Capabilities.new(versioned: true, syncable: true, presignable: true)
+      # scannable: false — chunk mode's tree comes from the sync engine's changelog, not from
+      # anyone walking a store. Library::ScanJob.scan_all! reads this and no-ops here, which is the
+      # answer to a question nobody asked: there is no store to poll, and `nodes` is already
+      # authoritative.
+      Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false)
     end
 
     def stat(user, node_id:)

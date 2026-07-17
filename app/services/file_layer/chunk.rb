@@ -51,6 +51,33 @@ module FileLayer
       )
     end
 
+    # What is in this deployment's trash. A READ verb, so every adapter answers it — unlike
+    # `undelete`, which is a write and so raises here (chunk-mode restore is Sync::Trash.restore,
+    # driven by TrashController's port_writable branch).
+    #
+    # DELEGATES TO Sync::Trash RATHER THAN RE-ASKING THE QUESTION. `user.nodes.where(deleted:
+    # true)` here would be a second definition of "the trash" alongside the one V1::TrashController
+    # already serves — §9a-3's complaint exactly, and the two would drift the first time either
+    # grew a rule. This adapter is the one place sync-shaped knowledge belongs (it already reads
+    # Version, ManifestChunk and Storage::ChunkStore), so it wraps that answer into the port's
+    # shape instead of minting a rival one. Nothing in Sync::* changes (spec §10).
+    #
+    # EVERY tombstone is listed, with no filter, and that is chunk mode's real answer rather than
+    # laziness: versions are kept forever (§5), so a tombstoned node's bytes are always one
+    # restore away. Share and S3 must filter, because there the bytes are only recoverable if WE
+    # moved them to `.trash` — see the argument at Share#trashed.
+    def trashed(user)
+      nodes = Sync::Trash.list(user:).to_a
+      # One query, not one per node: this list is unbounded (it is every file the user ever
+      # deleted) and #stat's per-node lookup would be an N+1 across all of it.
+      sizes = user.versions.where(version_id: nodes.filter_map(&:current_version_id))
+                  .pluck(:version_id, :size).to_h
+      nodes.map do |n|
+        TrashEntry.new(node_id: n.node_id, name: n.name, kind: n.kind,
+                       size: sizes[n.current_version_id], deleted_at: n.updated_at)
+      end
+    end
+
     def read(user, node_id:, content_token: nil)
       # A tombstoned node is GONE on every backend (contract:
       # test_contract_read_raises_not_found_for_a_deleted_node). Checked BEFORE resolving the

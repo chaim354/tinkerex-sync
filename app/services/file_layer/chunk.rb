@@ -29,7 +29,13 @@ module FileLayer
       # anyone walking a store. Library::ScanJob.scan_all! reads this and no-ops here, which is the
       # answer to a question nobody asked: there is no store to poll, and `nodes` is already
       # authoritative.
-      Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false)
+      #
+      # port_writable: false — and this is NOT "chunk mode can't take uploads", which it does
+      # all day. It says the port is the wrong door: the UI must drive Sync::Commit's two-phase
+      # presigned flow, which is why write/delete/move below refuse. Read as "accepts uploads"
+      # it would hide the upload button in the product's main deployment.
+      Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false,
+                       port_writable: false)
     end
 
     def stat(user, node_id:)
@@ -43,6 +49,33 @@ module FileLayer
         mtime: node.mtime,
         content_token: node.current_version_id
       )
+    end
+
+    # What is in this deployment's trash. A READ verb, so every adapter answers it — unlike
+    # `undelete`, which is a write and so raises here (chunk-mode restore is Sync::Trash.restore,
+    # driven by TrashController's port_writable branch).
+    #
+    # DELEGATES TO Sync::Trash RATHER THAN RE-ASKING THE QUESTION. `user.nodes.where(deleted:
+    # true)` here would be a second definition of "the trash" alongside the one V1::TrashController
+    # already serves — §9a-3's complaint exactly, and the two would drift the first time either
+    # grew a rule. This adapter is the one place sync-shaped knowledge belongs (it already reads
+    # Version, ManifestChunk and Storage::ChunkStore), so it wraps that answer into the port's
+    # shape instead of minting a rival one. Nothing in Sync::* changes (spec §10).
+    #
+    # EVERY tombstone is listed, with no filter, and that is chunk mode's real answer rather than
+    # laziness: versions are kept forever (§5), so a tombstoned node's bytes are always one
+    # restore away. Share and S3 must filter, because there the bytes are only recoverable if WE
+    # moved them to `.trash` — see the argument at Share#trashed.
+    def trashed(user)
+      nodes = Sync::Trash.list(user:).to_a
+      # One query, not one per node: this list is unbounded (it is every file the user ever
+      # deleted) and #stat's per-node lookup would be an N+1 across all of it.
+      sizes = user.versions.where(version_id: nodes.filter_map(&:current_version_id))
+                  .pluck(:version_id, :size).to_h
+      nodes.map do |n|
+        TrashEntry.new(node_id: n.node_id, name: n.name, kind: n.kind,
+                       size: sizes[n.current_version_id], deleted_at: n.updated_at)
+      end
     end
 
     def read(user, node_id:, content_token: nil)
@@ -71,6 +104,65 @@ module FileLayer
         raise NotFound, "file exceeds #{MAX_BYTES} bytes" if buf.bytesize > MAX_BYTES
       end
       buf
+    end
+
+    # Hand the browser this file's bytes. FilesController#blob's behavior, moved behind the port
+    # UNCHANGED — including the single-chunk redirect, which is not an optimization to tidy up
+    # but the one place chunk mode keeps §15 for a web download.
+    #
+    # `disposition:`/`content_type:` are the CONTROLLER'S policy (SAFE_INLINE_TYPES: which types
+    # may render inline in our origin, and ?download=1). Chunk's Stream does not apply them —
+    # the controller sets those headers itself, exactly as #blob does today — but the port's
+    # signature carries them because S3's Redirect must SIGN them into the URL at mint time, and
+    # a redirect that dropped them would serve an SVG executable from the bucket's origin while
+    # the same button on the same UI attached it here. See Delivery.
+    #
+    # NOT read's job and not read's rules: `download` never buffers, so MAX_BYTES (a
+    # host-protection cap on holding a whole file in memory) does not apply. The enumerator is
+    # LAZY — that is what keeps a 2GB file off the Rails heap.
+    #
+    # `disposition:` is REQUIRED even though this adapter never reads it — the port has ONE
+    # signature, and a caller who may omit it here but not on S3 learns the rule from whichever
+    # backend they developed against. See S3#download: omitting it there silently mints a signed
+    # header with no disposition type, which browsers resolve as inline.
+    def download(user, node_id:, disposition:, content_type: nil)
+      # The same liveness guard read applies: a tombstoned node is GONE on every backend, and
+      # download must not be the hole in that.
+      node = live_node!(user, node_id)
+      version = node.current_version
+      raise NotFound, "no version for node #{node_id.inspect}" unless version
+
+      chunks = version.manifest_chunks.to_a
+      store = Storage::ChunkStore.current
+
+      # BOTH HALVES OF THIS CONDITION ARE LOAD-BEARING, and neither is the presignable? question.
+      #
+      # `is_a?(S3ChunkStore)` — do NOT rewrite this as `capabilities.presignable?`. Verified: all
+      # three chunk stores implement presign_get, but the memory and local stores presign to URLs
+      # RAILS ITSELF SERVES, so redirecting to one would send the browser on a pointless round
+      # trip back through us — the opposite of what the redirect is for. "Can this store presign?"
+      # and "does its URL point off-box?" are different questions, and only the second belongs
+      # here. §9a-3/§9a-4's cleanup of the presignable/duck-typing split is real and stays
+      # deferred; this is why Phase 4 does not force it.
+      #
+      # `chunks.size == 1` — a redirect can only ever name ONE object. Redirecting a multi-chunk
+      # file hands the browser its first chunk with a 200 and the right filename: silent
+      # truncation, no error anywhere.
+      if chunks.size == 1 && store.is_a?(Storage::S3ChunkStore)
+        return Delivery::Redirect.new(url: store.presign_get(user.id, chunks.first.chunk_hash))
+      end
+
+      Delivery::Stream.new(enum: Enumerator.new do |y|
+        chunks.each do |mc|
+          bytes = self.class.fetch(store, user.id, mc.chunk_hash)
+          # nil is "genuinely absent" (a 404 from the presigned GET) — the same terminal answer
+          # read gives it. #blob used `|| ""` for the memory store, which silently served a file
+          # with a hole in it; the enumerator raising is loud, and by here the response has
+          # already begun, so quiet corruption is the one outcome worth refusing.
+          raise NotFound, "missing chunk #{mc.chunk_hash}" if bytes.nil?
+          y << bytes
+        end
+      end)
     end
 
     # The port's write path is share/s3 only. Chunk-mode mutations are the sync engine's, and

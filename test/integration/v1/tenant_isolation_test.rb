@@ -5,7 +5,14 @@ module V1
   # actually hold at the API edge: one user's device token can never see or mutate
   # another user's tree, changelog, or nodes.
   class TenantIsolationTest < ActionDispatch::IntegrationTest
-    setup { Storage::ChunkStore.reset! }
+    # Isolation AT THE SYNC SURFACE (tree, changelog, nodes), which Phase 4 Task 7 gates to chunk
+    # mode. Pinning does not weaken what this proves: on share/s3 those endpoints answer 501 to
+    # their owner and to a stranger alike, so the question this suite asks does not arise there.
+    # It is the deployment WITH the surface that has to keep the tenants apart.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
 
     def register(email:)
       bootstrap_token(email: email, device_name: "d")

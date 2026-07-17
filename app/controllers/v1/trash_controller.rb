@@ -3,6 +3,19 @@ module V1
   # kept, so this is purely surfacing recovery: list tombstoned nodes and un-tombstone
   # one (re-pointing at its existing current version — no new chunks).
   class TrashController < BaseController
+    # TWO DIFFERENT FEATURES SHARE THE WORD "TRASH", AND THIS IS THE CHUNK ONE. Here a delete is
+    # a tombstone whose versions are kept, so restore just re-points the node at a version it
+    # still has. A share/s3 library's trash is a different mechanism entirely (2b: the bytes are
+    # moved to `.trash/<node_id>/<name>` and recovered through FileLayer#undelete), and running
+    # THIS restore against one would un-tombstone a node with no version to re-point at:
+    #   - a SCAN tombstone (the file vanished from the NAS) comes back live, and the next scan
+    #     tombstones it again;
+    #   - a TRASH tombstone (storage_path NULLed, 2b) comes back live pointing at nothing, while
+    #     its bytes sit in `.trash` awaiting an undelete that now has a live node in its way.
+    # Neither is a recovery. 501 says this deployment does not have THIS trash; exposing the
+    # share trash over v1 is a feature, not a gate, and is not this phase's.
+    require_capability! :syncable
+
     # GET /v1/trash — the user's tombstoned nodes (newest-deleted first).
     def index
       nodes = Sync::Trash.list(user: current_user)

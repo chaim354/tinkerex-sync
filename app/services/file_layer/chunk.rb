@@ -40,15 +40,34 @@ module FileLayer
 
     def stat(user, node_id:)
       node = live_node!(user, node_id)
+      file_info(node, node.current_version&.size)
+    end
 
-      FileInfo.new(
-        node_id: node.node_id,
-        name: node.name,
-        kind: node.kind,
-        size: node.current_version&.size.to_i,
-        mtime: node.mtime,
-        content_token: node.current_version_id
-      )
+    # Describe MANY nodes in a number of queries that does not grow with the list — what a browse
+    # view actually asks, and what #stat cannot answer without one query per row.
+    #
+    # A PORT VERB RATHER THAN A LOOP AT THE CALLER, and the evidence that it was missing sits a
+    # few lines below: #trashed already hand-rolled this exact two-query shape ("One query, not
+    # one per node"), privately, because the port had no way to express it. FilesController#index
+    # could not do the same — it holds an ADAPTER, not a Chunk — so it looped #stat and paid a
+    # query per row (measured: 4000 queries / 527 ms of the 676 ms page, at 2000 nodes). The next
+    # bulk caller would have re-invented #trashed's private query a third time, and three private
+    # copies of one question is the divergence the shared contract exists to stop.
+    #
+    # A MISSING NODE IS AN ABSENT KEY, NOT A RAISE, and that is not laxness: #stat is asked about
+    # ONE node the caller named, so "it isn't there" IS its whole answer and NotFound is right. A
+    # bulk caller holds a LIST, and one row tombstoned between its query and this one must not
+    # take the whole page down — which is exactly what looping #stat did. A Hash reports the same
+    # fact by omission and lets the caller decide. Pinned as a cross-backend rule, because an
+    # adapter that raised instead would 404 a page on the deployment that happened to race.
+    def stat_all(user, node_ids:)
+      nodes = user.nodes.present.where(node_id: node_ids).to_a
+      # The sizes in ONE query, exactly as #trashed does it. Node#current_version is a `find_by`,
+      # not an association (app/models/node.rb), so `includes` cannot reach it and nothing but an
+      # explicit pluck collapses the second query per row.
+      sizes = user.versions.where(version_id: nodes.filter_map(&:current_version_id))
+                  .pluck(:version_id, :size).to_h
+      nodes.to_h { |n| [ n.node_id, file_info(n, sizes[n.current_version_id]) ] }
     end
 
     # What is in this deployment's trash. A READ verb, so every adapter answers it — unlike
@@ -241,6 +260,26 @@ module FileLayer
     def live_node!(user, node_id)
       user.nodes.present.find_by(node_id:) ||
         raise(NotFound, "node #{node_id.inspect} is deleted or does not exist")
+    end
+
+    # The one place a node becomes a FileInfo, shared by stat and stat_all for the reason
+    # live_node! is shared: the browse view (stat_all) and the detail view (stat) describing the
+    # same file DIFFERENTLY is precisely the §9a-1 bug in a new spelling, and one copy is what
+    # makes it impossible rather than merely unlikely.
+    #
+    # `size` is passed IN rather than read off the node, because that is the only part the two
+    # callers resolve differently — one version lookup vs. one plucked batch — and it is exactly
+    # the part the N+1 was made of. `.to_i` maps a version-less node (or a current_version_id
+    # whose row is gone) to 0 on both paths, which is what stat has always answered.
+    def file_info(node, size)
+      FileInfo.new(
+        node_id: node.node_id,
+        name: node.name,
+        kind: node.kind,
+        size: size.to_i,
+        mtime: node.mtime,
+        content_token: node.current_version_id
+      )
     end
   end
 end

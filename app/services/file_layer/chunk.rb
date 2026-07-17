@@ -29,7 +29,13 @@ module FileLayer
       # anyone walking a store. Library::ScanJob.scan_all! reads this and no-ops here, which is the
       # answer to a question nobody asked: there is no store to poll, and `nodes` is already
       # authoritative.
-      Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false)
+      #
+      # port_writable: false — and this is NOT "chunk mode can't take uploads", which it does
+      # all day. It says the port is the wrong door: the UI must drive Sync::Commit's two-phase
+      # presigned flow, which is why write/delete/move below refuse. Read as "accepts uploads"
+      # it would hide the upload button in the product's main deployment.
+      Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false,
+                       port_writable: false)
     end
 
     def stat(user, node_id:)

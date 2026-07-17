@@ -48,7 +48,18 @@ module V1
 
     # Mirror BaseController: for the `local` chunk backend, point presigned blob URLs back at
     # the host the client is talking to when no CHUNK_PUBLIC_URL is configured.
+    #
+    # INCLUDING ITS GATE, WHICH THIS CONTROLLER NEEDS EVEN MORE THAN THAT ONE DOES: building a
+    # chunk store a share deployment never configured raises KeyError, so without this an
+    # ANONYMOUS stranger got a Rails 500 page from the endpoint whose whole argument above is
+    # that 404 is the honest, backend-disclosing-nothing answer.
+    #
+    # `versioned`, not `syncable`, because this controller gates itself on the same fact its
+    # owner-side counterpart does (V1::ShareLinksController: require_capability! :versioned): a
+    # link can only be MINTED where there are versions, so where there are none there is nothing
+    # here to presign and redeem! is on its way to 404 regardless.
     def stash_request_base_url
+      return unless FileLayer.current.capabilities.versioned?
       if Storage::ChunkStore.current.is_a?(Storage::LocalChunkStore)
         Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE.value = request.base_url
       end

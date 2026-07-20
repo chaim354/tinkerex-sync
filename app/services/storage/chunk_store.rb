@@ -33,6 +33,12 @@ module Storage
     def presign_get(_user_id, _hash, expires_in: 3600) = raise(NotImplementedError)
     def exists?(_user_id, _hash) = raise(NotImplementedError)
 
+    # SERVER-SIDE write of one chunk. The normal path is a presigned client PUT (bytes never touch
+    # Rails, §15); this is the exception for SERVER-GENERATED content (addon output, Maker::Addons::
+    # LibraryOutput), where the bytes originate in Rails and there is no client to presign for.
+    # Content-addressed, so idempotent.
+    def put(_user_id, _hash, _bytes) = raise(NotImplementedError)
+
     # The storage age (last-modified Time) of a single object, or nil if absent/unsupported.
     # Lets a targeted reaper (Sync::PendingCommitReaper) apply the same grace-window guard the
     # list-based Sync::ChunkReaper gets from `list`, without a full keyspace enumeration. The

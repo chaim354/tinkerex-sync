@@ -39,6 +39,11 @@ module Storage
       false
     end
 
+    # Server-side content write (see ChunkStore#put).
+    def put(user_id, hash, bytes)
+      @client.put_object(bucket: @bucket, key: key_for(user_id, hash), body: bytes.b)
+    end
+
     def last_modified(user_id, hash)
       @client.head_object(bucket: @bucket, key: key_for(user_id, hash)).last_modified
     rescue Aws::S3::Errors::NotFound, Aws::S3::Errors::NoSuchKey

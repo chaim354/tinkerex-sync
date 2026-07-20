@@ -68,6 +68,9 @@ module Storage
       File.binwrite(path_for(user_id, hash), data)
     end
 
+    # Server-side content write (see ChunkStore#put).
+    def put(user_id, hash, bytes) = write_blob(user_id, hash, bytes.b)
+
     def read_blob(user_id, hash)
       return nil unless exists?(user_id, hash)
       File.binread(path_for(user_id, hash))

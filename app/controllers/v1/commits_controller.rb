@@ -29,6 +29,13 @@ module V1
       version, seq = Sync::Commit.finalize(user: current_user, commit_id: params[:commit_id],
                                            verify: Rails.configuration.x.verify_finalize)
       LibraryChannel.broadcast_change(current_user, seq)
+      # Eagerly render a thumbnail for a file synced from the desktop/API client (not just web
+      # uploads). content_token == version_id in chunk mode; best-effort, never fails the commit.
+      node = current_user.nodes.find_by(node_id: version.node_id)
+      if node
+        ::Maker::Previews::Enqueue.call(user: current_user, node_id: version.node_id,
+                                        name: node.name, version_id: version.version_id)
+      end
       render json: { version_id: version.version_id, seq: }
     rescue Sync::Commit::ChunksMissing => e
       render json: { error: "chunks_missing", missing: e.hashes }, status: :unprocessable_entity

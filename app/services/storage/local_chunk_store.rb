@@ -91,6 +91,13 @@ module Storage
       File.exist?(p) ? File.binread(p) : nil
     end
 
+    # Server-side content write (see ChunkStore#put).
+    def put(user_id, hash, bytes)
+      p = path_for(user_id, hash)
+      FileUtils.mkdir_p(File.dirname(p))
+      File.binwrite(p, bytes.b)
+    end
+
     def write(user_id, hash, bytes)
       p = path_for(user_id, hash)
       FileUtils.mkdir_p(File.dirname(p))

@@ -24,6 +24,10 @@ module FileLayer
     MOVE_MSG = 'chunk-mode move goes through the sync engine (Sync::Mutation.apply, op: "move"), ' \
                "not through FileLayer".freeze
 
+    MKDIR_MSG = 'chunk-mode mkdir goes through the sync engine (Sync::Mutation.apply, op: "mkdir"), ' \
+                "not through FileLayer — Maker::LibraryFolder branches to it; the port's mkdir is " \
+                "the share/s3 door".freeze
+
     def capabilities
       # scannable: false — chunk mode's tree comes from the sync engine's changelog, not from
       # anyone walking a store. Library::ScanJob.scan_all! reads this and no-ops here, which is the
@@ -208,6 +212,10 @@ module FileLayer
 
     def move(_user, node_id: nil, new_parent_node_id: nil, new_name: nil)
       raise NotImplementedError, MOVE_MSG
+    end
+
+    def mkdir(_user, parent_node_id: nil, name: nil)
+      raise NotImplementedError, MKDIR_MSG
     end
 
     # Normalize over the chunk-store backends.

@@ -74,6 +74,77 @@ module Sync
       assert_not_nil @user.chunks.find_by(chunk_hash: a), "inside grace → retained"
     end
 
+    # THE GRACE WINDOW'S ONLY REAL TEST, and the one whose absence made the window dead code.
+    #
+    # The sibling above ("keeps a recently-zeroed chunk") cannot fail for the reason it exists:
+    # its chunk was CREATED moments earlier in the same frozen-clock test, so `updated_at` is
+    # inside the window whether or not the decrement moved it. Every other sweep test hand-sets
+    # `updated_at` via update_column — the comment on the first one says "bypass the updated_at
+    # touch" out loud — so the suite never observed what prune_version! itself writes there.
+    #
+    # This is the real shape: a chunk that has existed for hours (i.e. EVERY chunk in a real
+    # library) and was zeroed just now. Before Gc.touch_refcounts!, `updated_at` still held the
+    # insert_all timestamp, the window compared creation age, and the sweep freed a chunk a
+    # concurrent commit could still be deduping against.
+    test "sweep_orphans! keeps a chunk zeroed NOW even though it was created long ago" do
+      a = "a" * 64
+      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a) ])
+      # Age the chunk itself — this is the state every chunk in a real library is in.
+      @user.chunks.find_by(chunk_hash: a).update_column(:updated_at, 3.hours.ago)
+
+      Sync::Gc.prune_version!(@user, v1) # zeroed NOW, so the grace window must protect it
+
+      assert_no_difference -> { @user.chunks.count } do
+        Sync::Gc.sweep_orphans!(@user, grace: 1.hour)
+      end
+      assert_not_nil @user.chunks.find_by(chunk_hash: a),
+                     "the window must measure time since ZEROING, not since creation"
+    end
+
+    # The sweep takes no user lock, so its batch is a snapshot the bumpers race. Simulated
+    # deterministically: the store's delete for whichever chunk is swept first re-references the
+    # OTHER one (what a concurrent Sync::Commit#finalize does when it dedups against a row that
+    # is still present — it uploads nothing and takes the refcount 0 -> 1). The second chunk is
+    # already in the loaded batch by then, so only the re-assertion of `refcount: ..0` inside the
+    # DELETE can save it. Order-independent on purpose: whichever goes first, the other survives.
+    test "sweep_orphans! refuses to free a chunk re-referenced after its batch was read" do
+      a, b = "a" * 64, "b" * 64
+      v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a), chunk(b) ])
+      Sync::Gc.prune_version!(@user, v1)
+      @user.chunks.update_all(updated_at: 2.hours.ago) # both past the window
+
+      user = @user
+      racer = Object.new
+      racer.define_singleton_method(:delete) do |_uid, hash|
+        other = hash == a ? b : a
+        user.chunks.where(chunk_hash: other).update_all("refcount = refcount + 1")
+      end
+      Storage::ChunkStore.current = racer
+
+      Sync::Gc.sweep_orphans!(@user, grace: 1.hour)
+
+      assert_equal 1, @user.chunks.count, "the re-referenced chunk must survive the sweep"
+      assert_equal 1, @user.chunks.sole.refcount
+    ensure
+      Storage::ChunkStore.reset!
+    end
+
+    # prune_version! is the claim: two overlapping retention passes holding the same in-memory
+    # Version must not both decrement, or a chunk SHARED with a surviving version reaches 0 while
+    # live and the sweep frees it. The second call is the overlap.
+    test "prune_version! decrements once even if called twice for the same version" do
+      shared = "5" * 64
+      v1, = commit!(name: "a", node_id: SecureRandom.uuid, chunks: [ chunk(shared) ])
+      commit!(name: "b", node_id: SecureRandom.uuid, chunks: [ chunk(shared) ])
+      assert_equal 2, @user.chunks.find_by(chunk_hash: shared).refcount
+
+      assert Sync::Gc.prune_version!(@user, v1), "first call claims the version"
+      assert_not Sync::Gc.prune_version!(@user, v1), "second call finds nothing to claim"
+
+      assert_equal 1, @user.chunks.find_by(chunk_hash: shared).refcount,
+                   "still held by file b — a double decrement would zero a LIVE chunk"
+    end
+
     test "sweep_orphans! never removes a live (refcount>0) chunk" do
       a = "a" * 64
       commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a) ]) # refcount 1

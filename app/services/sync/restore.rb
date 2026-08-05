@@ -17,7 +17,9 @@ module Sync
         hashes = ManifestChunk
                  .where(user_id: user.id, manifest_id: old.manifest_id)
                  .distinct.pluck(:chunk_hash)
-        user.chunks.where(chunk_hash: hashes).update_all("refcount = refcount + 1") if hashes.any?
+        # Gc.touch_refcounts!, not a bare update_all: a restore re-references chunks that may sit
+        # at refcount 0 awaiting a sweep, and `updated_at` is what that sweep's grace window reads.
+        Sync::Gc.touch_refcounts!(user.chunks.where(chunk_hash: hashes), by: 1) if hashes.any?
 
         version = user.versions.create!(
           version_id: SecureRandom.uuid, node_id:, manifest_id: old.manifest_id,

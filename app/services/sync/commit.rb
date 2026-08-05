@@ -205,7 +205,10 @@ module Sync
             created_at: now, updated_at: now }
         })
       end
-      user.chunks.where(chunk_hash: existing).update_all("refcount = refcount + 1") if existing.any?
+      # Through Gc.touch_refcounts! so the bump also moves `updated_at` — that column is what
+      # Gc.sweep_orphans!'s grace window filters on, and a dedup against an already-zeroed chunk
+      # is exactly the re-reference the window exists to protect. See its comment.
+      Sync::Gc.touch_refcounts!(user.chunks.where(chunk_hash: existing), by: 1) if existing.any?
     end
   end
 end

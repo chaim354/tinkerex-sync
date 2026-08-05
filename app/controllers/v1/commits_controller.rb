@@ -35,6 +35,13 @@ module V1
       if node
         ::Maker::Previews::Enqueue.call(user: current_user, node_id: version.node_id,
                                         name: node.name, version_id: version.version_id)
+        # And file it, if it landed at a project folder's root — closing §12.10's "a device push
+        # gets no eager nudge". Deliberately HERE rather than in Sync::Commit#finalize: a controller
+        # is the top layer and already reaches into Maker:: for the preview above, whereas a maker
+        # call inside Sync::Commit would invert the layering (the sync engine is what the maker
+        # layer is built ON). See .nudge for why this is an async, deduplicated enqueue rather than
+        # the synchronous sweep §12.10 rejected.
+        ::Maker::ProjectIntakeJob.nudge(user: current_user, node:)
       end
       render json: { version_id: version.version_id, seq: }
     rescue Sync::Commit::ChunksMissing => e

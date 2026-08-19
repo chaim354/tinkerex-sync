@@ -191,7 +191,12 @@ module Sync
     end
 
     test "finalize's verify raises ChunksMissing with the complete missing set, in manifest order" do
-      m = manifest_of(6, salt: 5_000)
+      # DESCENDING ON PURPOSE. With an ascending manifest, manifest order and SORTED order coincide,
+      # so a `.sort` slipped into the reject would pass and this test's own name would be a lie.
+      # Probed: against an ascending fixture, `.reverse` and a Set-difference both go RED but
+      # `.sort` stays GREEN. Reversing here is what gives the assertion teeth in all three
+      # directions. Do not "tidy" this back to ascending.
+      m = manifest_of(6, salt: 5_000).reverse
       seed_chunks!([ m[0], m[2], m[4] ])
       cid = begin_commit!(m, name: "gap.bin")
 

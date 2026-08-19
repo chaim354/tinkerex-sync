@@ -24,7 +24,12 @@ module V1
     # hashes only) before creating the immutable version + changelog entry — so a client that
     # crashes/lies between PUT and finalize can't create a version + chunk rows for bytes that
     # never arrived (permanent hydration 404s; dedup then reports the phantom chunk "present").
-    # Off by default (see config/initializers/finalize_verification.rb for why).
+    # ON by default. `finalize_verification.rb` is `ENV.fetch("SYNC_VERIFY_FINALIZE", "1") == "1"`,
+    # and the sync-engine suites are what set it to 0 (their bytes move through SharedDirIO, so
+    # the server's own store cannot see them). This line said "Off by default" until 2026-08-19 —
+    # wrong, contradicted by the initializer AND by the sentence three lines above it, and a
+    # reader who believed it would conclude production mints immutable versions without ever
+    # checking the bytes landed.
     def finalize
       version, seq = Sync::Commit.finalize(user: current_user, commit_id: params[:commit_id],
                                            verify: Rails.configuration.x.verify_finalize)

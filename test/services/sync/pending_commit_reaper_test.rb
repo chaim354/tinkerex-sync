@@ -10,11 +10,13 @@ module Sync
   # precisely those orphaned objects directly, with NO bucket `list` call (which S3/R2 bill
   # per request). The weekly Sync::ChunkReaper stays as the catch-all backstop.
   #
-  # CRITICAL SAFETY: before deleting an object we apply the SAME guards G4 uses — a hash is
-  # reaped ONLY when it is referenced by neither (a) a committed `chunks` row (dedup: another
-  # finalized version may share the very same content-addressed chunk) nor (b) any OTHER
-  # still-live pending_commit (a concurrent commit is about to finalize it). Only truly
-  # orphaned hashes are deleted; then the expired pending row is destroyed.
+  # CRITICAL SAFETY: a hash is reaped ONLY when it is referenced by neither (a) a committed
+  # `chunks` row (dedup: another finalized version may share the very same content-addressed
+  # chunk) nor (b) a pending_commit OTHER than the expired ones this run is destroying. (a)
+  # is G4's guard verbatim; (b) is NARROWER than G4's, which unions every pending row with no
+  # age filter — a deliberate divergence pinned by the last test in this file, not an
+  # oversight to harmonise away. Only orphaned hashes are deleted; then the expired row is
+  # destroyed.
   class PendingCommitReaperTest < ActiveSupport::TestCase
     setup do
       travel_to Time.utc(2026, 6, 1, 12, 0, 0)
@@ -186,6 +188,30 @@ module Sync
 
       assert_not_includes reaped, other_hash
       assert @store.exists?(other.id, other_hash), "other tenant's object untouched"
+    end
+
+    # ---- the DIVERGENCE from G4's guard, pinned as a decision rather than an accident ----
+    #
+    # `ChunkReaper.pending_hashes` unions EVERY pending row, no age filter; this reaper
+    # excludes exactly the expired rows it is about to destroy. One expired pending, one old
+    # object, and the two must answer DIFFERENTLY: G4 spares the hash (a pending row still
+    # names it) and this reaper reaps it (that row is the one being abandoned). Neither may
+    # be harmonised toward the other — narrowing G4 lets the backstop delete a live commit's
+    # chunk; widening this one makes it a no-op. Both directions are mutation-checked.
+
+    test "an expired pending's hash is protected from G4 and reaped here" do
+      h = hex
+      pc = pending!(chunks: [ chunk(h) ], age: 25.hours)
+
+      assert_empty Sync::ChunkReaper.reap!(@user, grace: 1.hour),
+                   "G4 unions EVERY pending row — an expired one still protects its hash"
+      assert @store.exists?(@user.id, h), "G4 leaves it in storage"
+      assert_not_nil PendingCommit.find_by(id: pc.id), "G4 never destroys a pending row"
+
+      assert_includes Sync::PendingCommitReaper.reap!(@user, ttl: 24.hours), h,
+                      "this reaper excludes the rows it is destroying, so it CAN reclaim"
+      assert_not @store.exists?(@user.id, h)
+      assert_nil PendingCommit.find_by(id: pc.id), "the expired row is destroyed on every path"
     end
 
     # ---- the all-users entry point --------------------------------------------------

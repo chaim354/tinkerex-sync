@@ -95,6 +95,13 @@ module Sync
     # All chunk hashes referenced by a user's in-flight pending commits. A pending commit's
     # manifest is JSON ([{ "hash", "offset", "length" }, ...]); we union every hash so an
     # object an active commit is about to finalize is never reaped, regardless of its age.
+    #
+    # **DO NOT ADD AN AGE FILTER HERE.** Every row, no filter, is what makes this the wider
+    # of the two pending guards, and the backstop must be the wider one: filtering by
+    # `created_at` would let this reaper delete a chunk a slow multi-chunk commit — or a
+    # retried `begin` — is still about to finalize. Sync::PendingCommitReaper deliberately
+    # asks the NARROWER question (it excludes the expired rows it is destroying in the same
+    # call); that divergence is stated there and pinned in `pending_commit_reaper_test.rb`.
     def self.pending_hashes(user)
       set = Set.new
       user.pending_commits.find_each do |pc|

@@ -27,10 +27,13 @@ module V1
     # constant 5. The web `trash#index` was batched and budget-guarded from the start; this one
     # was neither.
     #
-    # `.to_a` FIRST, BECAUSE `Sync::Trash.list` HANDS BACK A RELATION. Without it the
-    # `filter_map` and the `map` are two separate executions of the tombstone query — the N+1
-    # traded for an N+2, with the batch load reading a snapshot the serialized rows never came
-    # from.
+    # `.to_a` MATERIALIZES ONCE, AND SAVES NO QUERY — do not document it as one. An earlier
+    # version of this comment claimed the `filter_map` and the `map` were two executions of the
+    # tombstone query. They are not: `nodes` is a single relation, `filter_map` loads and memoizes
+    # it (`loaded?` is true afterwards), and the relation form measures identically — 5 queries at
+    # N=1/5/25, probed. What `.to_a` buys is that `nodes` is unambiguously an Array for both
+    # enumerations, so a later edit replacing it with a second `Sync::Trash.list(...)` call cannot
+    # silently reintroduce the second query. That is its whole claim.
     def index
       nodes = Sync::Trash.list(user: current_user).to_a
       sizes = Sync.load_version_sizes(current_user, nodes.filter_map(&:current_version_id))

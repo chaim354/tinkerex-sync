@@ -61,10 +61,25 @@ module Sync
       # the reaper that would clear the bad row is the one the bad row stops, and because the
       # row lives on, Sync::ChunkReaper.pending_hashes keeps protecting every hash it names —
       # so G4 is permanently blocked from exactly the bytes it exists to reclaim. Probed:
-      # three consecutive reap_all! runs returned 0 with both rows surviving, while the good
-      # row's object had already been deleted before the abort. Fix it HERE, at the door;
+      # three consecutive reap_all! runs returned 0 with both rows surviving. WHETHER BYTES ARE
+      # ALSO LOST DEPENDS ON ROW ORDER, and both orders wedge: `Set` preserves insertion order,
+      # so a bad row created FIRST aborts before anything is deleted (the object survives),
+      # while a good row created first has already had its `store.delete` run when the loop
+      # reaches the nil — bytes gone, row still alive protecting a hash that no longer exists,
+      # both reapers reporting success at reaping nothing. Fix it HERE, at the door;
       # a `.compact` in the reaper only converts a loud failure into a silent no-op while
       # the door goes on persisting nil-hash manifests.
+      #
+      # THIS FIXES NEW ROWS ONLY. A deployment already carrying one stays wedged until the row
+      # is removed by hand, and the only symptom is a swallowed `Rails.logger.error` from a
+      # background job — no health check, no bin/ script. So the diagnostic belongs here rather
+      # than in a reader's head:
+      #
+      #     PendingCommit.where("manifest_json LIKE ?", '%"hash":null%')
+      #
+      # Deliberately NOT a migration: a pattern-matched destructive sweep over pending_commits
+      # is the shape §14a warns about, and the real population is near zero — the Rust client
+      # always sends 64-hex, so a row needs a hand-rolled or hostile client against `local`.
       unless bad.empty?
         raise InvalidManifest, "invalid chunk hash(es): #{bad.first(3).map(&:inspect).join(', ')}"
       end

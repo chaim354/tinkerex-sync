@@ -49,7 +49,23 @@ module Sync
       manifest_id = manifest_id_for(manifest)
       hashes = manifest.map { |c| c["hash"] }.uniq
       bad = hashes.reject { |h| h.is_a?(String) && HASH_RE.match?(h) }
-      if bad.any?
+      # `unless bad.empty?`, NEVER `if bad.any?` — `bad` holds the values that FAILED, and a
+      # manifest entry with no "hash" key normalizes to `"hash" => nil`, so the single most
+      # likely malformed manifest makes `bad == [nil]` and `[nil].any?` is **false**. That
+      # spelling let the whole guard below be skipped and persisted the nil straight into
+      # `pending_commits.manifest_json`, where it is a live landmine: the hourly
+      # Sync::PendingCommitReaper's storage-age guard calls `store.last_modified(uid, nil)`,
+      # which on LocalChunkStore (STORAGE_BACKEND=local, a shipped self-host mode) raises
+      # NoMethodError out of `path_for`'s regex — OUTSIDE that method's begin/rescue, so
+      # `reap!` aborts BEFORE `destroy_all` and the expired rows survive. Self-sustaining:
+      # the reaper that would clear the bad row is the one the bad row stops, and because the
+      # row lives on, Sync::ChunkReaper.pending_hashes keeps protecting every hash it names —
+      # so G4 is permanently blocked from exactly the bytes it exists to reclaim. Probed:
+      # three consecutive reap_all! runs returned 0 with both rows surviving, while the good
+      # row's object had already been deleted before the abort. Fix it HERE, at the door;
+      # a `.compact` in the reaper only converts a loud failure into a silent no-op while
+      # the door goes on persisting nil-hash manifests.
+      unless bad.empty?
         raise InvalidManifest, "invalid chunk hash(es): #{bad.first(3).map(&:inspect).join(', ')}"
       end
 

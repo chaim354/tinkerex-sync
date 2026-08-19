@@ -120,6 +120,50 @@ module Sync
       end
     end
 
+    # A MANIFEST ENTRY WITH NO `hash` KEY IS THE CASE THE TWO TESTS ABOVE CANNOT REACH.
+    # They send junk STRINGS ("NOTAHASH", "../7/deadbeef"), so `bad` holds a truthy value and
+    # `bad.any?` fires. `normalize` synthesizes `"hash" => nil` for a missing key, which makes
+    # `bad == [nil]` — and `[nil].any?` is **false**, so the guard was skipped and the nil was
+    # persisted into `pending_commits.manifest_json`. Hence `unless bad.empty?` at the door.
+    # THE ROW IS ASSERTED BEFORE THE RAISE, deliberately: under the `if bad.any?` mutation the
+    # first thing that must go red is "a row was created", not "nothing was raised" — the row
+    # is the wedge (see the reaper-side test in pending_commit_reaper_test.rb), the missing
+    # raise is only how it got there.
+    test "begin refuses a manifest entry with NO hash key, and persists nothing" do
+      err = nil
+      begin
+        Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                           node_id: SecureRandom.uuid, parent_node_id: nil, name: "nohash.bin",
+                           base_version_id: nil, size: 5,
+                           manifest: [ { "offset" => 0, "length" => 5 } ])
+      rescue Sync::Commit::InvalidManifest => e
+        err = e
+      end
+
+      assert_equal [], @user.pending_commits.pluck(:manifest_json),
+                   "a nil-hash manifest must never reach pending_commits — that row wedges " \
+                   "Sync::PendingCommitReaper on a LocalChunkStore deployment, permanently"
+      refute_nil err, "the door must raise InvalidManifest, not merely decline to persist"
+      assert_match(/invalid chunk hash/, err.message)
+    end
+
+    test "begin refuses an EXPLICIT nil hash, and persists nothing" do
+      err = nil
+      begin
+        Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                           node_id: SecureRandom.uuid, parent_node_id: nil, name: "nilhash.bin",
+                           base_version_id: nil, size: 5,
+                           manifest: [ { "hash" => nil, "offset" => 0, "length" => 5 } ])
+      rescue Sync::Commit::InvalidManifest => e
+        err = e
+      end
+
+      assert_equal [], @user.pending_commits.pluck(:manifest_json),
+                   "an explicit null hash is the same [nil] `bad` set as an absent key"
+      refute_nil err, "the door must raise InvalidManifest, not merely decline to persist"
+      assert_match(/invalid chunk hash/, err.message)
+    end
+
     test "begin accepts a valid 64-hex hash (regression: the happy path still works)" do
       good = "a" * 64
       res = Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,

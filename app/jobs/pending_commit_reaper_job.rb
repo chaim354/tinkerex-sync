@@ -6,7 +6,10 @@
 # uploaded (DB read + targeted deletes only). That makes it cheap enough to run HOURLY, so
 # the common abandoned-upload leak is reclaimed promptly instead of waiting up to a week.
 #
-# Both reapers apply the same safety guards (dedup-committed + live-pending); see
+# The two reapers do NOT apply the same guards, and an earlier version of this line said they
+# did. G4 unions EVERY pending row with no age filter; this one excludes the expired rows it is
+# destroying, which is the only reason it can reclaim anything. Narrow G4 to match and the
+# weekly backstop can delete a chunk a slow live commit is about to finalize. See
 # Sync::PendingCommitReaper. The weekly ChunkReaper stays as the catch-all backstop for any
 # leak with no pending row to expire. Per-user errors are isolated in reap_all!.
 class PendingCommitReaperJob < ApplicationJob

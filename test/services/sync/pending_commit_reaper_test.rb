@@ -14,7 +14,9 @@ module Sync
   # `chunks` row (dedup: another finalized version may share the very same content-addressed
   # chunk) nor (b) a pending_commit OTHER than the expired ones this run is destroying. (a)
   # is G4's guard verbatim; (b) is NARROWER than G4's, which unions every pending row with no
-  # age filter — a deliberate divergence pinned by the last test in this file, not an
+  # age filter — a deliberate divergence pinned by
+  # `an expired pending's hash is protected from G4 and reaped here` (NAMED, not "the last test":
+  # it is not last, and a positional reference rots), not an
   # oversight to harmonise away. Only orphaned hashes are deleted; then the expired row is
   # destroyed.
   class PendingCommitReaperTest < ActiveSupport::TestCase

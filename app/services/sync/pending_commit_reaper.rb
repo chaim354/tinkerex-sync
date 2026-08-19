@@ -77,6 +77,13 @@ module Sync
       live_pending = Set.new
       if candidates.any?
         committed = user.chunks.where(chunk_hash: candidates.to_a).pluck(:chunk_hash).to_set
+        # THE NEXT TWO CLAUSES ARE MUTUALLY REDUNDANT, which is worth knowing before you delete one.
+        # `expired` IS `where("created_at < ?", cutoff)`, so `expired_ids` is exactly the set the age
+        # clause would exclude, against one `cutoff` computed once. Probed: deleting EITHER leaves the
+        # suite green (18 runs, 72 assertions, 0 failures); only deleting BOTH changes behaviour. Kept
+        # as a pair because it is free and the id form closes a theoretical insert-between-the-two-
+        # queries window — but do NOT read a green suite after removing one as evidence it was dead
+        # weight, and do NOT write a mutation check against a single clause: it cannot go red.
         live_pending = user.pending_commits
                            .where.not(id: expired_ids)
                            .where("created_at >= ?", cutoff)

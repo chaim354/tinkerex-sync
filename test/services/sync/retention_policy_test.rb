@@ -48,6 +48,32 @@ module Sync
       assert_equal recent.map(&:version_id).to_set, kept
     end
 
+    # F-13b. The < 24h tier keeps every version by giving each one a group of its own, so its
+    # bucket key has to be unique PER VERSION. It used to be `created_at.to_f`, which is not:
+    # `created_at` is datetime(6), so versions written inside the same microsecond shared a key,
+    # landed in one group, and all but the newest were thinned by the tier whose entire contract
+    # is that it thins nothing. Probed before the fix: three tied versions under 24h → ONE kept.
+    #
+    # `version!(age:)` reproduces the tie exactly, with no timing luck involved, because @now is a
+    # frozen literal and `@now - age` is therefore the identical Time for identical ages.
+    #
+    # LATENT, NOT LIVE, and recorded as such: all three production version creators pass
+    # `created_at: Time.current` and are serialized behind `user.lock!`/`next_seq!`, and
+    # RETENTION_POLICY is set in no deploy config, so `apply_retention!` is a no-op on all three
+    # live backends. What makes it worth fixing is that a bulk import or a `created_at` backfill
+    # makes it live instantly and silently — a keep-every-version tier that quietly does not.
+    test "tiered keeps ALL versions under 24h that share an identical created_at" do
+      tied = [ version!(age: 1.hour), version!(age: 1.hour), version!(age: 1.hour) ]
+      assert_equal 1, tied.map(&:created_at).uniq.length, "fixture must actually tie"
+
+      policy = RetentionPolicy.for(mode: "tiered")
+      # current_version_id: nil so the keep-set is the TIER MATH alone — the Base invariant would
+      # otherwise re-add one of these three and mask two thirds of the defect.
+      kept = keep_ids(policy, nil)
+      assert_equal tied.map(&:version_id).to_set, kept,
+                   "the < 24h tier keeps every version, ties included"
+    end
+
     test "tiered thins older versions to one-per-day in the 1-30 day window" do
       current = version!(age: 1.minute)
       # Three versions on the SAME day (~5 days ago) → only one survives.

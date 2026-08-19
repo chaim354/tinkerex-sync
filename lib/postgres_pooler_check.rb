@@ -16,6 +16,18 @@ module PostgresPoolerCheck
 
   Result = Struct.new(:ok, :same_backend, :lock_held, :error, keyword_init: true)
 
+  # Should the boot probe run at all? PURE — no connection, no I/O, so it is assertable on every
+  # CI leg (all of which are SQLite). It answers ELIGIBILITY only: is this adapter one the probe
+  # applies to, and has the operator opted out. It says nothing about the OUTCOME — that is
+  # `probe` + the initializer's warn/raise branch.
+  # `env:` is a kwarg default rather than a captured constant or ivar, so ENV is re-read on every
+  # call and a hash injected by one test cannot leak into the next.
+  def self.probe?(adapter:, env: ENV)
+    return false if env["DB_SKIP_POOLER_CHECK"] == "1"
+
+    adapter.to_s.start_with?("postgres")
+  end
+
   # Run the probe on the given AR connection. Returns a Result. Does NOT raise on a clean
   # statement-mode detection (ok=false); only sets `error` if the probe itself errored.
   def self.probe(conn)

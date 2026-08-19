@@ -49,7 +49,38 @@ module Sync
       manifest_id = manifest_id_for(manifest)
       hashes = manifest.map { |c| c["hash"] }.uniq
       bad = hashes.reject { |h| h.is_a?(String) && HASH_RE.match?(h) }
-      if bad.any?
+      # `unless bad.empty?`, NEVER `if bad.any?` — `bad` holds the values that FAILED, and a
+      # manifest entry with no "hash" key normalizes to `"hash" => nil`, so the single most
+      # likely malformed manifest makes `bad == [nil]` and `[nil].any?` is **false**. That
+      # spelling let the whole guard below be skipped and persisted the nil straight into
+      # `pending_commits.manifest_json`, where it is a live landmine: the hourly
+      # Sync::PendingCommitReaper's storage-age guard calls `store.last_modified(uid, nil)`,
+      # which on LocalChunkStore (STORAGE_BACKEND=local, a shipped self-host mode) raises
+      # NoMethodError out of `path_for`'s regex — OUTSIDE that method's begin/rescue, so
+      # `reap!` aborts BEFORE `destroy_all` and the expired rows survive. Self-sustaining:
+      # the reaper that would clear the bad row is the one the bad row stops, and because the
+      # row lives on, Sync::ChunkReaper.pending_hashes keeps protecting every hash it names —
+      # so G4 is permanently blocked from exactly the bytes it exists to reclaim. Probed:
+      # three consecutive reap_all! runs returned 0 with both rows surviving. WHETHER BYTES ARE
+      # ALSO LOST DEPENDS ON ROW ORDER, and both orders wedge: `Set` preserves insertion order,
+      # so a bad row created FIRST aborts before anything is deleted (the object survives),
+      # while a good row created first has already had its `store.delete` run when the loop
+      # reaches the nil — bytes gone, row still alive protecting a hash that no longer exists,
+      # both reapers reporting success at reaping nothing. Fix it HERE, at the door;
+      # a `.compact` in the reaper only converts a loud failure into a silent no-op while
+      # the door goes on persisting nil-hash manifests.
+      #
+      # THIS FIXES NEW ROWS ONLY. A deployment already carrying one stays wedged until the row
+      # is removed by hand, and the only symptom is a swallowed `Rails.logger.error` from a
+      # background job — no health check, no bin/ script. So the diagnostic belongs here rather
+      # than in a reader's head:
+      #
+      #     PendingCommit.where("manifest_json LIKE ?", '%"hash":null%')
+      #
+      # Deliberately NOT a migration: a pattern-matched destructive sweep over pending_commits
+      # is the shape §14a warns about, and the real population is near zero — the Rust client
+      # always sends 64-hex, so a row needs a hand-rolled or hostile client against `local`.
+      unless bad.empty?
         raise InvalidManifest, "invalid chunk hash(es): #{bad.first(3).map(&:inspect).join(', ')}"
       end
 
@@ -60,7 +91,7 @@ module Sync
       )
       pending.save!
 
-      present = user.chunks.where(chunk_hash: hashes).pluck(:chunk_hash).to_set
+      present = known_chunk_hashes(user, hashes)
       missing = hashes.reject { |h| present.include?(h) }
 
       store = Storage::ChunkStore.current
@@ -77,9 +108,12 @@ module Sync
 
       if verify
         store = Storage::ChunkStore.current
-        missing = manifest.map { |c| c["hash"] }.uniq.reject do |h|
-          user.chunks.exists?(chunk_hash: h) || store.exists?(user.id, h)
-        end
+        hashes = manifest.map { |c| c["hash"] }.uniq
+        known = known_chunk_hashes(user, hashes)
+        # HEAD only what the DB does not already know — and ask the DB once, not once per hash.
+        # Reject from the ORDERED array against the set: v1/commits_controller#finalize and
+        # FilesController#finalize_upload render this list to the client verbatim.
+        missing = hashes.reject { |h| known.include?(h) || store.exists?(user.id, h) }
         raise ChunksMissing, missing if missing.any?
       end
 
@@ -167,6 +201,28 @@ module Sync
     end
 
     # ---- helpers -------------------------------------------------------------
+
+    # Binds per `IN (...)`. Postgres' wire protocol caps a statement at 65535 parameters and a
+    # MAX_MANIFEST_CHUNKS manifest carries up to 100_000 hashes, so the lookup is sliced. (SQLite
+    # takes 100k binds fine — probed on 3.53.2 — which is why no `bin/rails test` leg can reach
+    # this; it is a Postgres-only failure and `begin` has always had it too.)
+    HASH_LOOKUP_SLICE = 5_000
+
+    # Which of `hashes` this user already has a `chunks` row for, as a Set. ONE `WHERE ... IN`
+    # per slice, grouped in memory — same shape as Sync.load_manifests.
+    #
+    # `begin` and `finalize`'s verify block ask the same question, and the verify half used to ask
+    # it with a per-hash `exists?`: N sequential round-trips whose DISTINCT binds the AR query
+    # cache cannot coalesce. The FULLY-DEDUPED re-commit is precisely the case
+    # config/initializers/finalize_verification.rb calls one the "write hot path pays nothing for"
+    # — true of the storage HEAD it names (the `||` short-circuits), false of the DB probe beside
+    # it, which paid one query per chunk (~1000 on a 1 GB file) inside the finalize request.
+    def self.known_chunk_hashes(user, hashes)
+      hashes.each_slice(HASH_LOOKUP_SLICE).each_with_object(Set.new) do |slice, set|
+        set.merge(user.chunks.where(chunk_hash: slice).pluck(:chunk_hash))
+      end
+    end
+    private_class_method :known_chunk_hashes
 
     # manifest_id = SHA-256 of the ordered chunk-hash list (matches the Rust client).
     def self.manifest_id_for(manifest)

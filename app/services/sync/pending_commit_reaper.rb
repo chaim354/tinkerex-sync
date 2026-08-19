@@ -18,13 +18,26 @@ module Sync
   # The weekly ChunkReaper stays as the catch-all backstop (e.g. a finalize that destroyed
   # the pending row but crashed before committing — a case with no pending row to expire).
   #
-  # CRITICAL SAFETY — the SAME two guards G4 applies, so we never delete a live chunk:
+  # CRITICAL SAFETY — two guards, so we never delete a live chunk:
   #
   #   1. **Dedup guard:** the hash must NOT be referenced by any committed `chunks` row.
   #      Chunks are content-addressed + refcounted, so a finalized version may share the
   #      very same chunk this abandoned commit uploaded. That object is live; spare it.
-  #   2. **Live-pending guard:** the hash must NOT be referenced by any OTHER still-live
-  #      `pending_commit`. A concurrent commit is mid-flight and about to finalize it.
+  #      This one is G4's guard verbatim (its own `committed` set).
+  #   2. **Live-pending guard:** the hash must NOT be referenced by any `pending_commit`
+  #      OTHER than the expired rows this run is about to destroy. A concurrent commit is
+  #      mid-flight and about to finalize it.
+  #
+  # **GUARD 2 IS NARROWER THAN G4's, DELIBERATELY — do not harmonise them in either
+  # direction.** `ChunkReaper.pending_hashes` unions EVERY pending row with no age filter at
+  # all, so a row that is expired but still present protects its hashes there indefinitely;
+  # excluding `expired_ids` here is the only reason this reaper can reclaim anything at all.
+  # Narrow G4 to match and the weekly backstop deletes a chunk a slow live commit is about
+  # to finalize; widen this one to match and it becomes a no-op. Both directions are
+  # mutation-checked by `pending_commit_reaper_test.rb`'s divergence test.
+  # The consequence to know: for as long as an expired row SURVIVES — the hourly job
+  # disabled, dry-run, or failing — G4 is blocked from exactly the bytes it exists to
+  # reclaim. That is why the row is destroyed below on every path, reap or no reap.
   #
   # Only a hash that is orphaned under BOTH guards is deleted. Then the expired pending row
   # is destroyed (so a re-run is a clean no-op). Idempotent (delete is a no-op on an absent
@@ -33,8 +46,10 @@ module Sync
   # never crossing tenants).
   class PendingCommitReaper
     # How long a legitimate un-finalized commit may live before its row is considered
-    # abandoned. Mirrors Sync::ChunkReaper::PENDING_COMMIT_TTL — the two reapers must agree
-    # on what "expired" means.
+    # abandoned. Numerically Sync::ChunkReaper::PENDING_COMMIT_TTL, but NOT the same
+    # question: there it is an OBJECT-AGE grace, and G4 never asks a pending row's age at
+    # all. Sharing the number keeps the two windows from drifting; it does not make the
+    # two guards the same one (see above).
     TTL = Sync::ChunkReaper::PENDING_COMMIT_TTL
 
     # Reap one user's abandoned-upload orphans. Returns the array of reaped chunk hashes
@@ -62,6 +77,13 @@ module Sync
       live_pending = Set.new
       if candidates.any?
         committed = user.chunks.where(chunk_hash: candidates.to_a).pluck(:chunk_hash).to_set
+        # THE NEXT TWO CLAUSES ARE MUTUALLY REDUNDANT, which is worth knowing before you delete one.
+        # `expired` IS `where("created_at < ?", cutoff)`, so `expired_ids` is exactly the set the age
+        # clause would exclude, against one `cutoff` computed once. Probed: deleting EITHER leaves the
+        # suite green (18 runs, 72 assertions, 0 failures); only deleting BOTH changes behaviour. Kept
+        # as a pair because it is free and the id form closes a theoretical insert-between-the-two-
+        # queries window — but do NOT read a green suite after removing one as evidence it was dead
+        # weight, and do NOT write a mutation check against a single clause: it cannot go red.
         live_pending = user.pending_commits
                            .where.not(id: expired_ids)
                            .where("created_at >= ?", cutoff)

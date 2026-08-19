@@ -17,14 +17,31 @@ module V1
     require_capability! :syncable
 
     # GET /v1/trash — the user's tombstoned nodes (newest-deleted first).
+    #
+    # THE SIZES COME FROM ONE BATCH LOAD, NOT `n.current_version` PER ROW. This list is unbounded —
+    # `FileLayer::Chunk#trashed`, which serves the same rows through the port, says so in its own
+    # comment ("it is every file the user ever deleted") — and there is no pagination here. Each
+    # `Node#current_version` is a `find_by` (no AR association on the string `version_id`, so
+    # `includes` cannot reach it), so the loop cost 4 + N queries, N being the tombstones that
+    # carry a `current_version_id`. Measured on this endpoint: N=1 → 5, N=5 → 9, N=25 → 29; now a
+    # constant 5. The web `trash#index` was batched and budget-guarded from the start; this one
+    # was neither.
+    #
+    # `.to_a` MATERIALIZES ONCE, AND SAVES NO QUERY — do not document it as one. An earlier
+    # version of this comment claimed the `filter_map` and the `map` were two executions of the
+    # tombstone query. They are not: `nodes` is a single relation, `filter_map` loads and memoizes
+    # it (`loaded?` is true afterwards), and the relation form measures identically — 5 queries at
+    # N=1/5/25, probed. What `.to_a` buys is that `nodes` is unambiguously an Array for both
+    # enumerations, so a later edit replacing it with a second `Sync::Trash.list(...)` call cannot
+    # silently reintroduce the second query. That is its whole claim.
     def index
-      nodes = Sync::Trash.list(user: current_user)
+      nodes = Sync::Trash.list(user: current_user).to_a
+      sizes = Sync.load_version_sizes(current_user, nodes.filter_map(&:current_version_id))
       render json: {
         items: nodes.map { |n|
-          v = n.current_version
           { node_id: n.node_id, name: n.name, kind: n.kind,
             parent_node_id: n.parent_node_id, deleted_at: n.updated_at,
-            size: v&.size, version_id: n.current_version_id }
+            size: sizes[n.current_version_id], version_id: n.current_version_id }
         }
       }
     end

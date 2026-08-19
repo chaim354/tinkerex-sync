@@ -10,11 +10,15 @@ module Sync
   # precisely those orphaned objects directly, with NO bucket `list` call (which S3/R2 bill
   # per request). The weekly Sync::ChunkReaper stays as the catch-all backstop.
   #
-  # CRITICAL SAFETY: before deleting an object we apply the SAME guards G4 uses — a hash is
-  # reaped ONLY when it is referenced by neither (a) a committed `chunks` row (dedup: another
-  # finalized version may share the very same content-addressed chunk) nor (b) any OTHER
-  # still-live pending_commit (a concurrent commit is about to finalize it). Only truly
-  # orphaned hashes are deleted; then the expired pending row is destroyed.
+  # CRITICAL SAFETY: a hash is reaped ONLY when it is referenced by neither (a) a committed
+  # `chunks` row (dedup: another finalized version may share the very same content-addressed
+  # chunk) nor (b) a pending_commit OTHER than the expired ones this run is destroying. (a)
+  # is G4's guard verbatim; (b) is NARROWER than G4's, which unions every pending row with no
+  # age filter — a deliberate divergence pinned by
+  # `an expired pending's hash is protected from G4 and reaped here` (NAMED, not "the last test":
+  # it is not last, and a positional reference rots), not an
+  # oversight to harmonise away. Only orphaned hashes are deleted; then the expired row is
+  # destroyed.
   class PendingCommitReaperTest < ActiveSupport::TestCase
     setup do
       travel_to Time.utc(2026, 6, 1, 12, 0, 0)
@@ -188,6 +192,30 @@ module Sync
       assert @store.exists?(other.id, other_hash), "other tenant's object untouched"
     end
 
+    # ---- the DIVERGENCE from G4's guard, pinned as a decision rather than an accident ----
+    #
+    # `ChunkReaper.pending_hashes` unions EVERY pending row, no age filter; this reaper
+    # excludes exactly the expired rows it is about to destroy. One expired pending, one old
+    # object, and the two must answer DIFFERENTLY: G4 spares the hash (a pending row still
+    # names it) and this reaper reaps it (that row is the one being abandoned). Neither may
+    # be harmonised toward the other — narrowing G4 lets the backstop delete a live commit's
+    # chunk; widening this one makes it a no-op. Both directions are mutation-checked.
+
+    test "an expired pending's hash is protected from G4 and reaped here" do
+      h = hex
+      pc = pending!(chunks: [ chunk(h) ], age: 25.hours)
+
+      assert_empty Sync::ChunkReaper.reap!(@user, grace: 1.hour),
+                   "G4 unions EVERY pending row — an expired one still protects its hash"
+      assert @store.exists?(@user.id, h), "G4 leaves it in storage"
+      assert_not_nil PendingCommit.find_by(id: pc.id), "G4 never destroys a pending row"
+
+      assert_includes Sync::PendingCommitReaper.reap!(@user, ttl: 24.hours), h,
+                      "this reaper excludes the rows it is destroying, so it CAN reclaim"
+      assert_not @store.exists?(@user.id, h)
+      assert_nil PendingCommit.find_by(id: pc.id), "the expired row is destroyed on every path"
+    end
+
     # ---- the all-users entry point --------------------------------------------------
 
     test "reap_all! sweeps every user and returns the total reaped count" do
@@ -206,6 +234,71 @@ module Sync
       total = Sync::PendingCommitReaper.reap_all!(ttl: 24.hours)
 
       assert_equal 2, total, "one orphan reaped per user"
+    end
+
+    # ---- the blast radius of a nil-hash pending row, pinned from the OTHER side ------
+    #
+    # EVERY TEST ABOVE RUNS ON MemoryChunkStore, WHOSE `path_for` HAS NO GUARD — `key_for(uid,
+    # nil)` is the harmless string "chunks/<uid>/", so `last_modified(uid, nil)` just answers
+    # nil and the nil-hash row is SILENT there. `Storage::LocalChunkStore` (STORAGE_BACKEND=
+    # local, a shipped self-host mode) validates the hash with a regex, so the same call raises
+    # `NoMethodError: undefined method 'match?' for nil` — and that call sits OUTSIDE `reap!`'s
+    # begin/rescue, which wraps only `store.delete`. So `reap!` aborts BEFORE `destroy_all`, the
+    # expired rows survive, `Sync::ChunkReaper.pending_hashes` goes on protecting every hash they
+    # name, and G4 is permanently blocked from exactly the bytes it exists to reclaim. The row
+    # that stops the reaper is the row only the reaper would clear: self-sustaining.
+    #
+    # This test is the reaper-side half of the door fix in `Sync::Commit.begin` (`unless
+    # bad.empty?`). The malformed begin is ATTEMPTED through the real door and its refusal
+    # swallowed — with the door closed nothing is created and the ordinary expired row reaps
+    # normally; revert the door to `if bad.any?` and this same test errors with that
+    # NoMethodError, which is the whole chain in one failure.
+    #
+    # The malformed row is created FIRST so that under the mutation `nil` is the first candidate
+    # the loop reaches — a deterministic abort, rather than one that depends on which hash the
+    # candidate Set happens to yield first.
+    test "a normal expired row still reaps on a LocalChunkStore — the nil-hash wedge cannot recur" do
+      dir = Rails.root.join("tmp", "pcreaper-local-#{SecureRandom.hex(6)}").to_s
+      local = Storage::LocalChunkStore.new(dir:)
+      Storage::ChunkStore.current = local
+
+      # The door must refuse this. Under the `if bad.any?` mutation it does NOT, and the
+      # resulting nil-hash pending row is what wedges the sweep below.
+      begin
+        Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                           node_id: SecureRandom.uuid, parent_node_id: nil, name: "bad.bin",
+                           base_version_id: nil, size: 5,
+                           manifest: [ { "offset" => 0, "length" => 5 } ])
+      rescue Sync::Commit::InvalidManifest
+        # expected with the door closed
+      end
+
+      # An ordinary abandoned upload: real hash, bytes in storage, 25h old.
+      good = hex
+      cid = SecureRandom.uuid
+      Sync::Commit.begin(user: @user, device: @device, commit_id: cid,
+                         node_id: SecureRandom.uuid, parent_node_id: nil, name: "good.bin",
+                         base_version_id: nil, size: 5, manifest: [ chunk(good) ])
+      local.put(@user.id, good, "bytes")
+      # Backdate EVERY pending row this user has, not just `cid`. With the door closed that is
+      # exactly one row and this reads as a plain `update_column`; under the mutation it is what
+      # puts the nil-hash row into `expired` too, which is the only way the wedge forms. Age only
+      # the row named by `cid` and the malformed row stays FRESH, never becomes a candidate, and
+      # the mutation fails on a row count instead of showing the NoMethodError chain.
+      @user.pending_commits.update_all(created_at: 25.hours.ago)
+      local.set_mtime!(@user.id, good, 25.hours.ago)
+
+      reaped = Sync::PendingCommitReaper.reap!(@user, ttl: 24.hours)
+
+      assert_equal [ good ], reaped, "the ordinary orphan is reaped, not blocked by a wedged row"
+      refute local.exists?(@user.id, good), "its bytes are gone from storage"
+      assert_equal 0, @user.pending_commits.count,
+                   "reap! reached destroy_all — no row survives to block G4 forever"
+      refute_includes Sync::ChunkReaper.pending_hashes(@user), good,
+                      "G4 is no longer blocked from the hash by a surviving pending row"
+    ensure
+      FileUtils.rm_rf(dir) if dir
+      Storage::ChunkStore.reset!
     end
   end
 end

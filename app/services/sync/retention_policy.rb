@@ -68,7 +68,7 @@ module Sync
       def candidates_to_keep(versions, current_version_id:, now:)
         keep = Set.new
         # Group by (tier, period-key); keep the newest version in each group.
-        groups = versions.group_by { |v| bucket_key(now - v.created_at, v.created_at) }
+        groups = versions.group_by { |v| bucket_key(v, now:) }
         groups.each_value do |group|
           newest = group.max_by(&:created_at)
           keep << newest.version_id
@@ -76,11 +76,25 @@ module Sync
         keep
       end
 
-      # A nil key means "keep every version individually" (the < 24h tier): use a unique
-      # key per version so none are grouped/thinned. Otherwise group by the period bucket.
-      def bucket_key(age, created_at)
+      # The tier decides how coarsely versions are grouped; the newest of each group survives.
+      #
+      # THE < 24h TIER'S KEY MUST BE UNIQUE PER VERSION, AND `created_at` IS NOT. That tier's
+      # whole contract is "keep every version", which it keeps by giving each version a group of
+      # its own — so the key has to be something no two versions can share. `created_at` is a
+      # datetime(6) column, so two versions written inside the same microsecond have the SAME
+      # value, land in one group, and `max_by(&:created_at)` keeps exactly one of them: the tier
+      # that promises to thin nothing thins silently. Probed before the fix, with three tied
+      # versions all under 24h, two of the three were pruned; one microsecond apart, both kept.
+      #
+      # `version_id` is unique BY CONSTRUCTION — a unique index on (user_id, version_id) plus a
+      # model-level uniqueness validation — is never rewritten, and is already the handle
+      # `Sync::Gc.prune_version!` deletes by. The older tiers deliberately DO collide across
+      # versions: grouping is the entire point of a daily/weekly/monthly bucket.
+      def bucket_key(version, now:)
+        age = now - version.created_at
+        created_at = version.created_at
         if age < 24.hours
-          [ :raw, created_at.to_f ] # unique → never thinned
+          [ :raw, version.version_id ] # unique by construction → never thinned
         elsif age < 30.days
           [ :daily, created_at.utc.strftime("%Y-%m-%d") ]
         elsif age < 365.days

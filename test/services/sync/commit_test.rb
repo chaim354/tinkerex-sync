@@ -120,6 +120,50 @@ module Sync
       end
     end
 
+    # A MANIFEST ENTRY WITH NO `hash` KEY IS THE CASE THE TWO TESTS ABOVE CANNOT REACH.
+    # They send junk STRINGS ("NOTAHASH", "../7/deadbeef"), so `bad` holds a truthy value and
+    # `bad.any?` fires. `normalize` synthesizes `"hash" => nil` for a missing key, which makes
+    # `bad == [nil]` — and `[nil].any?` is **false**, so the guard was skipped and the nil was
+    # persisted into `pending_commits.manifest_json`. Hence `unless bad.empty?` at the door.
+    # THE ROW IS ASSERTED BEFORE THE RAISE, deliberately: under the `if bad.any?` mutation the
+    # first thing that must go red is "a row was created", not "nothing was raised" — the row
+    # is the wedge (see the reaper-side test in pending_commit_reaper_test.rb), the missing
+    # raise is only how it got there.
+    test "begin refuses a manifest entry with NO hash key, and persists nothing" do
+      err = nil
+      begin
+        Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                           node_id: SecureRandom.uuid, parent_node_id: nil, name: "nohash.bin",
+                           base_version_id: nil, size: 5,
+                           manifest: [ { "offset" => 0, "length" => 5 } ])
+      rescue Sync::Commit::InvalidManifest => e
+        err = e
+      end
+
+      assert_equal [], @user.pending_commits.pluck(:manifest_json),
+                   "a nil-hash manifest must never reach pending_commits — that row wedges " \
+                   "Sync::PendingCommitReaper on a LocalChunkStore deployment, permanently"
+      refute_nil err, "the door must raise InvalidManifest, not merely decline to persist"
+      assert_match(/invalid chunk hash/, err.message)
+    end
+
+    test "begin refuses an EXPLICIT nil hash, and persists nothing" do
+      err = nil
+      begin
+        Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
+                           node_id: SecureRandom.uuid, parent_node_id: nil, name: "nilhash.bin",
+                           base_version_id: nil, size: 5,
+                           manifest: [ { "hash" => nil, "offset" => 0, "length" => 5 } ])
+      rescue Sync::Commit::InvalidManifest => e
+        err = e
+      end
+
+      assert_equal [], @user.pending_commits.pluck(:manifest_json),
+                   "an explicit null hash is the same [nil] `bad` set as an absent key"
+      refute_nil err, "the door must raise InvalidManifest, not merely decline to persist"
+      assert_match(/invalid chunk hash/, err.message)
+    end
+
     test "begin accepts a valid 64-hex hash (regression: the happy path still works)" do
       good = "a" * 64
       res = Sync::Commit.begin(user: @user, device: @device, commit_id: SecureRandom.uuid,
@@ -155,6 +199,106 @@ module Sync
         Sync::Commit.finalize(user: @user, commit_id: cid)
       end
       assert_equal "dir", dir.reload.kind, "the dir is untouched"
+    end
+
+    # ---- F-02: finalize's verify must not probe `chunks` one hash at a time ------
+    #
+    # `verify: true` is the production default (config/initializers/finalize_verification.rb
+    # defaults SYNC_VERIFY_FINALIZE to "1"; FilesController#finalize_upload hard-codes it), and its
+    # block asks "does this user already have this chunk?" once per manifest entry. Asked per hash
+    # that is N sequential DB round-trips with DISTINCT binds, which the AR query cache cannot
+    # coalesce — and the FULLY-DEDUPED re-commit, the very case the initializer describes as one the
+    # "write hot path pays nothing for", is the case that pays all N: the `||` short-circuits the
+    # storage HEAD, so only the DB half runs. Measured pre-fix: 5 queries at n=5, 100 at n=100.
+    #
+    # ASSERT CONSTANCY IN N, NEVER A LITERAL (§14e). Every other statement in finalize is O(1) in
+    # manifest size (one insert_all, one refcount update_all, the version/node/changelog writes), so
+    # growth here is the N+1 returning. count_queries runs `uncached` — without that the repeat
+    # measurement reads a cached 0 and passes regardless.
+    test "finalize's verify does not scale its query count with manifest size (dedup hit)" do
+      c_small = prepare_deduped_commit!(n: 5, salt: 0)
+      c_large = prepare_deduped_commit!(n: 100, salt: 1_000)
+      c_off   = prepare_deduped_commit!(n: 100, salt: 2_000)
+
+      small = count_queries { Sync::Commit.finalize(user: @user, commit_id: c_small, verify: true) }
+      large = count_queries { Sync::Commit.finalize(user: @user, commit_id: c_large, verify: true) }
+      off   = count_queries { Sync::Commit.finalize(user: @user, commit_id: c_off, verify: false) }
+
+      # The guard must be able to fail for the reason it exists: flip the two measured calls to
+      # `verify: false` and this line goes red, instead of the test silently measuring the
+      # begin-only path and passing whether or not the N+1 is there.
+      assert_operator large, :>, off,
+                      "verify: true must actually run the block under measurement"
+      assert_equal small, large,
+                   "verify probed `chunks` per hash: #{small} queries at n=5 vs #{large} at n=100"
+      assert_equal 3, @user.versions.count, "all three commits still finalized"
+    end
+
+    test "finalize's verify raises ChunksMissing with the complete missing set, in manifest order" do
+      # DESCENDING ON PURPOSE. With an ascending manifest, manifest order and SORTED order coincide,
+      # so a `.sort` slipped into the reject would pass and this test's own name would be a lie.
+      # Probed: against an ascending fixture, `.reverse` and a Set-difference both go RED but
+      # `.sort` stays GREEN. Reversing here is what gives the assertion teeth in all three
+      # directions. Do not "tidy" this back to ascending.
+      m = manifest_of(6, salt: 5_000).reverse
+      seed_chunks!([ m[0], m[2], m[4] ])
+      cid = begin_commit!(m, name: "gap.bin")
+
+      err = assert_raises(Sync::Commit::ChunksMissing) do
+        Sync::Commit.finalize(user: @user, commit_id: cid, verify: true)
+      end
+      # v1/commits_controller#finalize and FilesController#finalize_upload render e.hashes to the
+      # client verbatim, so the ORDER is part of the response: reject from the ordered manifest
+      # against the known-set, never iterate the set.
+      assert_equal [ m[1], m[3], m[5] ].map { |c| c["hash"] }, err.hashes
+      assert_equal 0, @user.versions.count, "no version for a commit whose bytes never landed"
+    end
+
+    private
+
+    # n distinct valid 64-hex hashes; `salt` keeps two manifests in one test from sharing chunks.
+    def manifest_of(n, salt: 0)
+      n.times.map { |i| { "hash" => format("%064x", salt + i), "offset" => i * 10, "length" => 10 } }
+    end
+
+    def seed_chunks!(manifest)
+      now = Time.current
+      Chunk.insert_all(manifest.map { |c|
+        { user_id: @user.id, chunk_hash: c["hash"], size: c["length"],
+          refcount: 1, created_at: now, updated_at: now }
+      })
+    end
+
+    def begin_commit!(manifest, name:)
+      cid = SecureRandom.uuid
+      Sync::Commit.begin(user: @user, device: @device, commit_id: cid, node_id: SecureRandom.uuid,
+                         parent_node_id: nil, name:, base_version_id: nil,
+                         size: manifest.sum { |c| c["length"] }, manifest:)
+      cid
+    end
+
+    # A pending commit whose chunks the user ALREADY has rows for — the dedup-hit case, where the
+    # storage HEAD never runs and the DB half is the whole cost.
+    def prepare_deduped_commit!(n:, salt:)
+      m = manifest_of(n, salt:)
+      seed_chunks!(m)
+      begin_commit!(m, name: "dedup-#{salt}.bin")
+    end
+
+    # Same shape as test/services/sync/scale_test.rb's helper: count real SQL round-trips
+    # (excluding schema/transaction noise) inside the block, `uncached` so the AR query cache can't
+    # make a repeat measurement read 0.
+    def count_queries(&block)
+      count = 0
+      counter = ->(_name, _start, _finish, _id, payload) do
+        next if payload[:name] == "SCHEMA" || payload[:cached]
+        next if payload[:sql].match?(/\A\s*(BEGIN|COMMIT|ROLLBACK|RELEASE|SAVEPOINT|PRAGMA)/i)
+        count += 1
+      end
+      ActiveRecord::Base.uncached do
+        ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
+      end
+      count
     end
   end
 end

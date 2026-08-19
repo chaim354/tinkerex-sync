@@ -41,10 +41,13 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
   #
   # RESIDUAL, stated plainly rather than papered over: these pin what `probe?` ANSWERS, not that
   # the initializer still CALLS it. Delete the call site in
-  # config/initializers/postgres_pooler_check.rb and all three stay green. Only a boot against a
-  # real Postgres DATABASE_URL could catch that, and no `bin/ci` leg sets one — every leg is
+  # config/initializers/postgres_pooler_check.rb and all three stay green. No RUNTIME test can
+  # catch that on a SQLite leg, and no `bin/ci` leg sets a Postgres DATABASE_URL — every leg is
   # SQLite. The wiring is therefore UNGUARDED here; do not write a comment claiming otherwise,
   # which is exactly the false confidence the comment this replaced gave.
+  # (A STATIC source assertion WOULD close it on every leg — the shape `ci_hygiene_test.rb`,
+  # `deploy_hygiene_test.rb` and `architecture_invariants_test.rb` already use. Deliberately not
+  # added here: it is a new guard needing its own mutation check, not part of this fix.)
   #
   # Three separate tests, not one with three assertions: minitest aborts a test method at its
   # first failure, so an inverted adapter check would report ONE failure instead of two and the

@@ -229,8 +229,7 @@ module FileLayer
       # destination is taken" must mean the same thing behind every LIBRARY_BACKEND, not just on
       # two of three -- and it is reachable through the ordinary New Folder chooser
       # (Maker::LibraryFolder.create_child!), not merely a hypothetical.
-      colliding = user.nodes.present.find_by(parent_node_id:, name:)
-      raise UnsupportedOperation, "#{name.inspect} already exists as a #{colliding.kind}" if colliding
+      destination_vacant!(user, parent_node_id, name)
 
       node = user.nodes.new(
         node_id: SecureRandom.uuid, parent_node_id:, name:, kind: "dir",
@@ -265,9 +264,7 @@ module FileLayer
       # push through the mount can still land a duplicate sibling on chunk. 14c is the right
       # citation, not 12 item 11 -- that one is about a project-scoped upload's dedup being
       # per-folder rather than project-wide, a different gap one layer up.
-      colliding = user.nodes.present.where(parent_node_id: new_parent_node_id, name: new_name)
-                      .where.not(node_id: node.node_id).first
-      raise UnsupportedOperation, "#{new_name.inspect} already exists as a #{colliding.kind}" if colliding
+      destination_vacant!(user, new_parent_node_id, new_name, except_node_id: node.node_id)
 
       seq = Sync::Mutation.apply(user:, node:, op: "move") do |n|
         n.parent_node_id = new_parent_node_id
@@ -327,6 +324,37 @@ module FileLayer
     def live_node!(user, node_id)
       user.nodes.present.find_by(node_id:) ||
         raise(NotFound, "node #{node_id.inspect} is deleted or does not exist")
+    end
+
+    # ONE QUESTION, ONE ANSWER, ONE MESSAGE -- "is any live node of any kind already at
+    # (parent_node_id, name)?" -- shared by mkdir and move, which asked it in two places with two
+    # spellings of one identical query and one identical message.
+    #
+    # DELIBERATELY MIRRORS FileLayer::S3#destination_vacant!, which has answered exactly this
+    # across write/mkdir/move/undelete since Phase 3 and whose own comment cites §14a APPROVINGLY,
+    # as the reason to share. That distinction is the one to hold on to, because §14a ALSO records
+    # a bug caused by sharing: what must not be shared is per-op REMEDIATION ADVICE -- the
+    # WRITE_MSG/DELETE_MSG constants above stay separate because "go and use this other door"
+    # names a DIFFERENT door per verb. "The destination is occupied" is not advice; it is one
+    # fact, identical whichever verb tripped over it.
+    #
+    # SHARE INLINES THIS FOUR TIMES, IN FOUR WORDINGS, AND THAT IS SHARE'S CORRECT ANSWER, NOT A
+    # LAPSE: it holds a row AND a real file on disk, so its move and undelete must special-case
+    # `dest == src` in path terms. Chunk keys on a single canonical row per node, like S3 -- which
+    # is why S3 is the sibling to copy here and Share is not.
+    #
+    # No `kind:` parameter, unlike S3's: that one exists for S3's file-key-vs-dir-marker namespace
+    # split, and chunk has no such split for it to do anything with.
+    #
+    # FOR THE UNDELETE COMING IN TASK 6 (§14a's fourth port verb): if a revive wants Share's
+    # wording ("occupied -- undelete must not clobber" reads better than "already exists" for a
+    # file coming BACK), inline it there rather than bending this message. A better error beats
+    # DRY, and that is exactly the call Share made differently from S3 for the same verb.
+    def destination_vacant!(user, parent_node_id, name, except_node_id: nil)
+      scope = user.nodes.present.where(parent_node_id:, name:)
+      scope = scope.where.not(node_id: except_node_id) if except_node_id
+      occupant = scope.first
+      raise UnsupportedOperation, "#{name.inspect} already exists as a #{occupant.kind}" if occupant
     end
 
     # The one place a node becomes a FileInfo, shared by stat and stat_all for the reason

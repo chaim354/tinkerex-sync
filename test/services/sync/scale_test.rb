@@ -16,7 +16,7 @@ module Sync
   # with N). Adapter-agnostic — pure ActiveRecord, correct on SQLite + Postgres.
   class ScaleTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "scale@example.com")
       @device = Device.register!(user: @user, name: "t")
     end

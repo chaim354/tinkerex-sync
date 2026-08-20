@@ -94,7 +94,7 @@ module Sync
       present = known_chunk_hashes(user, hashes)
       missing = hashes.reject { |h| present.include?(h) }
 
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       put_urls = missing.index_with { |h| store.presign_put(user.id, h) }
 
       Result.new(commit_id:, missing:, put_urls:)
@@ -107,7 +107,7 @@ module Sync
       manifest_id = pending.manifest_id
 
       if verify
-        store = Storage::ChunkStore.current
+        store = Sync::Storage::ChunkStore.current
         hashes = manifest.map { |c| c["hash"] }.uniq
         known = known_chunk_hashes(user, hashes)
         # HEAD only what the DB does not already know — and ask the DB once, not once per hash.

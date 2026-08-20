@@ -11,7 +11,7 @@ module V1
     # so Phase 4 Task 7 gates this surface on `syncable` and this suite says which trash it means.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def register(email:, name: "laptop")

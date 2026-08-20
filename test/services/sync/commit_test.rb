@@ -3,7 +3,7 @@ require "test_helper"
 module Sync
   class CommitTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "svc@example.com")
       @device = Device.register!(user: @user, name: "t")
     end

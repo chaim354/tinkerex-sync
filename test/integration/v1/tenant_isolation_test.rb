@@ -11,7 +11,7 @@ module V1
     # It is the deployment WITH the surface that has to keep the tenants apart.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def register(email:)

@@ -6,7 +6,7 @@ module Sync
   # keep one or split into two.
   class ConflictsTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "conflict@example.com")
       @dev_a = Device.register!(user: @user, name: "laptop")
       @dev_b = Device.register!(user: @user, name: "workshop-pi")

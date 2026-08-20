@@ -6,8 +6,8 @@ require "test_helper"
 class ChunkReaperJobTest < ActiveSupport::TestCase
   setup do
     travel_to Time.utc(2026, 6, 1, 12, 0, 0)
-    Storage::ChunkStore.reset!
-    @store = Storage::ChunkStore.current
+    Sync::Storage::ChunkStore.reset!
+    @store = Sync::Storage::ChunkStore.current
     # reap_all! enumerates the whole keyspace; wipe the persistent memory-store dir so
     # leftover objects from other tests don't inflate the count.
     FileUtils.rm_rf(@store.root)

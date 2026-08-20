@@ -29,7 +29,7 @@ module Sharing
       # Mint presigned GET URLs for the version's chunks, against the OWNER's keyspace.
       # Bytes still flow client <-> storage directly; Rails only signs the URLs.
       def presign_urls(expires_in: 3600)
-        store = Storage::ChunkStore.current
+        store = Sync::Storage::ChunkStore.current
         @chunk_hashes.to_a.index_with { |h| store.presign_get(@owner_id, h, expires_in:) }
       end
     end

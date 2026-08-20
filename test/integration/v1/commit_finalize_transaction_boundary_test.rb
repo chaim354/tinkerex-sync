@@ -36,7 +36,7 @@ module V1
 
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @email = "txn-boundary-#{SecureRandom.hex(4)}@example.com"
     end
 

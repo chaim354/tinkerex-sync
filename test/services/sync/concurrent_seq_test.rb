@@ -137,7 +137,7 @@ module Sync
     test "concurrent full commits produce a gapless duplicate-free changelog" do
       # Exercises the REAL commit path (begin → finalize, which calls next_seq! inside its own
       # transaction alongside version/node/changelog writes), not just next_seq! in isolation.
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       device = Device.register!(user: @user, name: "loadgen")
       total = THREADS * PER_THREAD
 

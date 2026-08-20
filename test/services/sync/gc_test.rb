@@ -12,7 +12,7 @@ module Sync
       # straddle a UTC midnight when the suite runs late in the day and split across two
       # daily buckets (a wall-clock-fragile test). travel_back runs automatically on teardown.
       travel_to Time.utc(2026, 6, 1, 12, 0, 0)
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "gc@example.com")
       @device = Device.register!(user: @user, name: "t")
     end
@@ -119,14 +119,14 @@ module Sync
         other = hash == a ? b : a
         user.chunks.where(chunk_hash: other).update_all("refcount = refcount + 1")
       end
-      Storage::ChunkStore.current = racer
+      Sync::Storage::ChunkStore.current = racer
 
       Sync::Gc.sweep_orphans!(@user, grace: 1.hour)
 
       assert_equal 1, @user.chunks.count, "the re-referenced chunk must survive the sweep"
       assert_equal 1, @user.chunks.sole.refcount
     ensure
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     # prune_version! is the claim: two overlapping retention passes holding the same in-memory
@@ -160,8 +160,8 @@ module Sync
       a = "a" * 64
       v1, = commit!(name: "f", node_id: SecureRandom.uuid, chunks: [ chunk(a) ])
       # The client uploaded the bytes; simulate the object existing in storage.
-      Storage::ChunkStore.current.put!(@user.id, a, "bytes")
-      assert Storage::ChunkStore.current.exists?(@user.id, a)
+      Sync::Storage::ChunkStore.current.put!(@user.id, a, "bytes")
+      assert Sync::Storage::ChunkStore.current.exists?(@user.id, a)
 
       Sync::Gc.prune_version!(@user, v1) # a → refcount 0
       @user.chunks.find_by(chunk_hash: a).update_column(:updated_at, 2.hours.ago)
@@ -169,7 +169,7 @@ module Sync
       Sync::Gc.sweep_orphans!(@user, grace: 1.hour)
 
       assert_nil @user.chunks.find_by(chunk_hash: a), "row gone"
-      assert_not Storage::ChunkStore.current.exists?(@user.id, a),
+      assert_not Sync::Storage::ChunkStore.current.exists?(@user.id, a),
                  "object deleted from storage"
     end
 
@@ -183,14 +183,14 @@ module Sync
       # refcount state: the row is removed first, the storage delete is best-effort.
       boom = Object.new
       def boom.delete(*) = raise("S3 unreachable")
-      Storage::ChunkStore.current = boom
+      Sync::Storage::ChunkStore.current = boom
 
       assert_difference -> { @user.chunks.count }, -1 do
         assert_nothing_raised { Sync::Gc.sweep_orphans!(@user, grace: 1.hour) }
       end
       assert_nil @user.chunks.find_by(chunk_hash: a)
     ensure
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     # ---- apply_retention! (policy → prune_version! → sweep) -------------------
@@ -201,7 +201,7 @@ module Sync
     def make_history!(node_id:, ages:)
       versions = ages.map do |age|
         h = SecureRandom.hex(32)
-        Storage::ChunkStore.current.put!(@user.id, h, "bytes")
+        Sync::Storage::ChunkStore.current.put!(@user.id, h, "bytes")
         manifest = SecureRandom.hex(8)
         Sync::ManifestChunk.create!(user_id: @user.id, manifest_id: manifest, seq: 0,
                               chunk_hash: h, offset: 0, length: 5)
@@ -256,13 +256,13 @@ module Sync
       # Same-day pair {5d, 5d+1h}: tiered keeps the NEWEST (5d), thins the older (5d+1h).
       pruned_candidate = vs.min_by(&:created_at) # oldest overall → the 5d+1h one
       pruned_hash = pruned_candidate.manifest_chunks.first.chunk_hash
-      assert Storage::ChunkStore.current.exists?(@user.id, pruned_hash)
+      assert Sync::Storage::ChunkStore.current.exists?(@user.id, pruned_hash)
 
       Sync::Gc.apply_retention!(@user, policy: Sync::RetentionPolicy.for(mode: "tiered"), grace: 0)
 
       assert_nil @user.versions.find_by(version_id: pruned_candidate.version_id), "version pruned"
       assert_nil @user.chunks.find_by(chunk_hash: pruned_hash), "chunk row gone"
-      assert_not Storage::ChunkStore.current.exists?(@user.id, pruned_hash),
+      assert_not Sync::Storage::ChunkStore.current.exists?(@user.id, pruned_hash),
                  "refcount-0 chunk deleted from storage"
     end
 
@@ -334,7 +334,7 @@ module Sync
 
       assert @user.versions.find_by(version_id: shared.version_id),
              "a live share link's frozen version must not be pruned"
-      assert Storage::ChunkStore.current.exists?(@user.id, shared.manifest_chunks.first.chunk_hash),
+      assert Sync::Storage::ChunkStore.current.exists?(@user.id, shared.manifest_chunks.first.chunk_hash),
              "its chunks survive (presigned GETs would otherwise dangle)"
     end
   end

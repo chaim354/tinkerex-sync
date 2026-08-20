@@ -62,7 +62,7 @@ module Sync
       return [] if expired.empty?
 
       expired_ids = expired.map(&:id)
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
 
       # Candidate hashes: every hash any EXPIRED pending uploaded.
       candidates = Set.new

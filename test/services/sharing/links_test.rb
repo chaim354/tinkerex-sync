@@ -57,7 +57,7 @@ class Sharing::LinksTest < ActiveSupport::TestCase
   end
 
   test "capability presign_urls only mints GETs for the version's own chunks" do
-    Storage::ChunkStore.reset!
+    Sync::Storage::ChunkStore.reset!
     raw = Sharing::Links.create_for_version!(user: @owner, node_id: @node_id,
                                              version_id: @version_id).raw_token
     cap = Sharing::Links.redeem(raw)

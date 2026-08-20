@@ -158,7 +158,7 @@ module Sync
     def self.sweep_orphans!(user, grace: 1.hour)
       grace = grace.seconds if grace.is_a?(Numeric)
       cutoff = grace.ago
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       # `<=` so grace: 0 means "sweep immediately" (a chunk zeroed at `now` is collectable)
       # rather than depending on real microseconds elapsing between the refcount touch and
       # this query — which made grace-0 sweeps non-deterministic under a frozen test clock.

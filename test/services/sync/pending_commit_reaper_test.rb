@@ -22,8 +22,8 @@ module Sync
   class PendingCommitReaperTest < ActiveSupport::TestCase
     setup do
       travel_to Time.utc(2026, 6, 1, 12, 0, 0)
-      Storage::ChunkStore.reset!
-      @store = Storage::ChunkStore.current
+      Sync::Storage::ChunkStore.reset!
+      @store = Sync::Storage::ChunkStore.current
       FileUtils.rm_rf(@store.root)
       FileUtils.mkdir_p(@store.root)
       @user = User.create!(email: "pcreaper@example.com")
@@ -240,7 +240,7 @@ module Sync
     #
     # EVERY TEST ABOVE RUNS ON MemoryChunkStore, WHOSE `path_for` HAS NO GUARD — `key_for(uid,
     # nil)` is the harmless string "chunks/<uid>/", so `last_modified(uid, nil)` just answers
-    # nil and the nil-hash row is SILENT there. `Storage::LocalChunkStore` (STORAGE_BACKEND=
+    # nil and the nil-hash row is SILENT there. `Sync::Storage::LocalChunkStore` (STORAGE_BACKEND=
     # local, a shipped self-host mode) validates the hash with a regex, so the same call raises
     # `NoMethodError: undefined method 'match?' for nil` — and that call sits OUTSIDE `reap!`'s
     # begin/rescue, which wraps only `store.delete`. So `reap!` aborts BEFORE `destroy_all`, the
@@ -259,8 +259,8 @@ module Sync
     # candidate Set happens to yield first.
     test "a normal expired row still reaps on a LocalChunkStore — the nil-hash wedge cannot recur" do
       dir = Rails.root.join("tmp", "pcreaper-local-#{SecureRandom.hex(6)}").to_s
-      local = Storage::LocalChunkStore.new(dir:)
-      Storage::ChunkStore.current = local
+      local = Sync::Storage::LocalChunkStore.new(dir:)
+      Sync::Storage::ChunkStore.current = local
 
       # The door must refuse this. Under the `if bad.any?` mutation it does NOT, and the
       # resulting nil-hash pending row is what wedges the sweep below.
@@ -298,7 +298,7 @@ module Sync
                       "G4 is no longer blocked from the hash by a surviving pending row"
     ensure
       FileUtils.rm_rf(dir) if dir
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
   end
 end

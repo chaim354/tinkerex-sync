@@ -9,7 +9,7 @@ module V1
       # minting one is a chunk-mode act and Phase 4 Task 7 gates the owner side on `versioned`.
       # Note "share link" here has nothing to do with FileLayer::Share -- see the controller.
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @token = bootstrap_account(email: "owner@example.com")["device_token"]
       @owner = User.find_by!(email: "owner@example.com")
       @node_id = SecureRandom.uuid

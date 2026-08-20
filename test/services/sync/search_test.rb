@@ -7,7 +7,7 @@ module Sync
   # and paginate.
   class SearchTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "search@example.com")
       @device = Device.register!(user: @user, name: "t")
     end

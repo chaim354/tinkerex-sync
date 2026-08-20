@@ -24,7 +24,7 @@ module V1
         mtime: params[:mtime] || node.mtime
       )
       seq = Sync::Mutation.apply(user: current_user, node:, op: "mkdir")
-      LibraryChannel.broadcast_change(current_user, seq)
+      Sync::LibraryChannel.broadcast_change(current_user, seq)
       render json: { node_id: node.node_id, seq: }, status: :created
     end
 
@@ -43,7 +43,7 @@ module V1
         mtime: params[:mtime] || node.mtime
       )
       seq = Sync::Mutation.apply(user: current_user, node:, op: "symlink")
-      LibraryChannel.broadcast_change(current_user, seq)
+      Sync::LibraryChannel.broadcast_change(current_user, seq)
       render json: { node_id: node.node_id, seq: }, status: :created
     end
 
@@ -56,7 +56,7 @@ module V1
     def destroy
       node = current_user.nodes.find_by!(node_id: params[:node_id])
       seq = Sync::SubtreeDelete.call(user: current_user, node:)
-      LibraryChannel.broadcast_change(current_user, seq)
+      Sync::LibraryChannel.broadcast_change(current_user, seq)
       render json: { seq: }
     end
 
@@ -68,7 +68,7 @@ module V1
         n.parent_node_id = params[:new_parent_node_id] if params.key?(:new_parent_node_id)
         n.name = params[:new_name] if params[:new_name].present?
       end
-      LibraryChannel.broadcast_change(current_user, seq)
+      Sync::LibraryChannel.broadcast_change(current_user, seq)
       render json: { seq: }
     end
 
@@ -89,7 +89,7 @@ module V1
       version, seq = Sync::Restore.call(
         user: current_user, node_id: params[:node_id], version_id: params.require(:version_id)
       )
-      LibraryChannel.broadcast_change(current_user, seq)
+      Sync::LibraryChannel.broadcast_change(current_user, seq)
       render json: { version_id: version.version_id, seq: }
     end
 
@@ -113,13 +113,13 @@ module V1
         # N-way: a node may have several divergent incoming versions; split makes a sibling for
         # each. `split_node_id` stays for 2-way callers; `split_node_ids` lists every new sibling.
         new_node_id, seq, new_node_ids = Sync::Conflicts.split(user: current_user, node_id: params[:node_id])
-        LibraryChannel.broadcast_change(current_user, seq)
+        Sync::LibraryChannel.broadcast_change(current_user, seq)
         render json: { split_node_id: new_node_id, split_node_ids: new_node_ids, seq: }
       else
         seq = Sync::Conflicts.keep(
           user: current_user, node_id: params[:node_id], version_id: params.require(:keep_version_id)
         )
-        LibraryChannel.broadcast_change(current_user, seq)
+        Sync::LibraryChannel.broadcast_change(current_user, seq)
         render json: { seq: }
       end
     end

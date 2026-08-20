@@ -5,15 +5,15 @@ module V1
   # LOCAL (filesystem) chunk store: when no CHUNK_PUBLIC_URL is set, presigned blob URLs must point
   # back at the host the client is actually talking to (zero-config single-box). Grepped before
   # moving anything: no v1/maker/* controller, and no other v1 controller besides the two below,
-  # calls Storage::ChunkStore, #presign_get or #presign_put anywhere — so leaving this on the shared
-  # base class bought the other twenty-six v1 controllers nothing but a Storage:: reference (and,
+  # calls Sync::Storage::ChunkStore, #presign_get or #presign_put anywhere — so leaving this on the shared
+  # base class bought the other twenty-six v1 controllers nothing but a Sync::Storage:: reference (and,
   # for the fourteen maker ones, a reason the sync engine had to be loaded to parse their own base
   # class) they never used.
   #
   # INCLUDED ONLY BY THE TWO CONTROLLERS THAT PRESIGN A CHUNK URL: V1::CommitsController
   # (Sync::Commit.begin presigns PUT urls for missing chunks) and V1::ChunksController (#download
   # presigns GET urls for hydration). V1::ShareController needs the identical AFFORDANCE (the
-  # `LocalChunkStore::PUBLIC_URL_OVERRIDE` write) for a THIRD, unrelated reason — the anonymous
+  # `Sync::Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE` write) for a THIRD, unrelated reason — the anonymous
   # share-link redeem side can mint GETs too — and STILL carries its own copy, on purpose, after
   # Stage 3a Task 6 (docs/superpowers/plans/2026-08-20-stage-3a-decouple-the-engine.md) looked at
   # folding it in. This comment used to say that fold-in was "Task 6's to fold in ... when there
@@ -68,8 +68,8 @@ module V1
     # never have.
     def stash_request_base_url
       return unless FileLayer.current.capabilities.syncable?
-      if Storage::ChunkStore.current.is_a?(Storage::LocalChunkStore)
-        Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE.value = request.base_url
+      if Sync::Storage::ChunkStore.current.is_a?(Sync::Storage::LocalChunkStore)
+        Sync::Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE.value = request.base_url
       end
     end
   end

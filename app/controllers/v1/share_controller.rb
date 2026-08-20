@@ -77,8 +77,8 @@ module V1
     # duplication here. Judged not clean enough to force; left separate on purpose.
     def stash_request_base_url
       return unless FileLayer.current.capabilities.versioned?
-      if Storage::ChunkStore.current.is_a?(Storage::LocalChunkStore)
-        Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE.value = request.base_url
+      if Sync::Storage::ChunkStore.current.is_a?(Sync::Storage::LocalChunkStore)
+        Sync::Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE.value = request.base_url
       end
     end
   end

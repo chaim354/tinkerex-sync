@@ -15,7 +15,7 @@ class RetentionJobTest < ActiveSupport::TestCase
     # fragility fixed for gc_test/retention_policy_test in 2e9df94. travel_back auto-runs on
     # teardown.
     travel_to Time.utc(2026, 6, 1, 12, 0, 0)
-    Storage::ChunkStore.reset!
+    Sync::Storage::ChunkStore.reset!
     @user = User.create!(email: "rj@example.com")
   end
 

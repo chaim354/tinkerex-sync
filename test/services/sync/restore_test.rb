@@ -7,7 +7,7 @@ module Sync
   # `put` in the changelog.
   class RestoreTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "restore@example.com")
       @device = Device.register!(user: @user, name: "t")
       @node_id = SecureRandom.uuid

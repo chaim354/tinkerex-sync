@@ -6,7 +6,20 @@ require "postgres_pooler_check"
 # FOR UPDATE lock and corrupt the changelog. Against a DIRECT Postgres connection (session
 # mode), the probe must pass — a leg no CI gate currently runs, since none sets a Postgres
 # DATABASE_URL. What DOES run everywhere is `probe?`, the pure eligibility predicate the boot
-# initializer gates on; see the comment above those three tests for what they do and do not pin.
+# initializer gates on; see the comment above those tests for what they do and do not pin.
+#
+# Stage 3a added a FOURTH thing `probe?` decides, alongside adapter prefix and
+# DB_SKIP_POOLER_CHECK: whether this deployment has a changelog at all
+# (`engine_present:`, defaulting to Sync.engine_present?). Those tests inject
+# `engine_present:` directly rather than LIBRARY_BACKEND — that kwarg, not the ENV var, is
+# `probe?`'s actual contract, and test/services/sync_test.rb already pins that
+# Sync.engine_present? reads LIBRARY_BACKEND correctly; duplicating that mapping here would only
+# be a second copy that could drift from the first. One PRE-EXISTING test below
+# ("probe? accepts a Postgres adapter") had to start pinning `engine_present: true` explicitly —
+# it used to rely on the default, which is fine under `bin/rails test` (ambient LIBRARY_BACKEND
+# unset → chunk → engine present) but would have started failing under the share/s3 `bin/ci` legs
+# the moment the default stopped always being true, since its whole point is the ADAPTER check
+# and it must stay leg-agnostic (config/ci.rb's "ambient LIBRARY_BACKEND" trap, one level up).
 class PostgresPoolerCheckTest < ActiveSupport::TestCase
   def postgres?
     ActiveRecord::Base.connection_pool.db_config.adapter.to_s.start_with?("postgres")
@@ -57,12 +70,31 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
   end
 
   test "probe? accepts a Postgres adapter" do
-    assert PostgresPoolerCheck.probe?(adapter: "postgresql"),
+    # engine_present: true is pinned explicitly (not left to the default) because this test's
+    # whole point is the ADAPTER match, and it must stay TRUE regardless of which `bin/ci` leg is
+    # running — the default reads ambient LIBRARY_BACKEND, which is "share"/"s3" for two of the
+    # three legs and would silently flip this assertion false without this pin.
+    assert PostgresPoolerCheck.probe?(adapter: "postgresql", engine_present: true),
            "an over-matching guard would silently disable the probe on real Postgres"
   end
 
   test "probe? honours the DB_SKIP_POOLER_CHECK escape hatch" do
     refute PostgresPoolerCheck.probe?(adapter: "postgresql", env: { "DB_SKIP_POOLER_CHECK" => "1" }),
            "DB_SKIP_POOLER_CHECK=1 is the bypass failure_message tells operators to use"
+  end
+
+  # Stage 3a: the pooler guard must not refuse a boot for a deployment with no changelog. Two
+  # separate tests, not one — same reasoning as the trio above: minitest stops at the first
+  # failure, so folding both directions into one test would let either direction go unproven
+  # without the suite ever saying so.
+  test "probe? refuses to run when the engine is absent, even for a Postgres adapter" do
+    refute PostgresPoolerCheck.probe?(adapter: "postgresql", env: {}, engine_present: false),
+           "a share/s3 deployment has no changelog and must never be refused a boot over " \
+           "next_seq!'s lock rule"
+  end
+
+  test "probe? still runs when the engine is present" do
+    assert PostgresPoolerCheck.probe?(adapter: "postgresql", env: {}, engine_present: true),
+           "the engine gate must not swallow the original adapter check for a chunk deployment"
   end
 end

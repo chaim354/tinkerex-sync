@@ -45,6 +45,26 @@ class LibraryChannel < ApplicationCable::Channel
   # DIFFERENT user is not a shape this app produces (every entry point is user-scoped), but it is
   # handled honestly anyway — the id check means such a call broadcasts immediately rather than
   # being silently absorbed into someone else's batch.
+  #
+  # THIS IS ENGINE PUBLIC API, CALLED BY THE HOST — the other direction from Sync::Hooks
+  # (app/services/sync/hooks.rb; Stage 3a Task 4). Sync::Hooks is the engine calling host business
+  # logic, inverted into a subscription; #batch is the host (Maker::ProjectIntake, `:243` and
+  # `:422`) calling straight INTO the engine, and it is allowed to because coalescing a sweep's
+  # notifications is exactly the kind of thing a client of this class should be able to ask for —
+  # unlike Sync::Hooks' case, this is not the engine depending on a host FEATURE existing.
+  #
+  # STAGE 3B MUST NOT MAKE THIS PRIVATE. It is easy to miss precisely because it already works and
+  # nothing is broken today — there is no failing test pushing back on a "cleanup" that scopes a
+  # sync-engine class's methods down to what the engine itself calls. Without it, both
+  # Maker::ProjectIntake call sites lose their nudge-coalescing and every filed/attached file goes
+  # back to broadcasting its own head_seq individually — the 500-broadcasts-for-one-sweep cost the
+  # comment above this method exists to describe, silently reintroduced.
+  #
+  # NOT PERMANENT, THOUGH — noted here so 3b's author does not have to rediscover it. Once the
+  # engine is remote (Stage 4), Maker::ProjectIntake's own moves go through the FileLayer port like
+  # everything else in the maker layer, and coalescing becomes the remote adapter's concern (it is
+  # the one place left holding a batch of writes to one user). The embedded answer here is correct
+  # for as long as the engine is in-process, not a design to carry forward unexamined.
   def self.batch(user)
     outer = Thread.current[BATCH_KEY]
     return yield if outer && outer[:user_id] == user.id

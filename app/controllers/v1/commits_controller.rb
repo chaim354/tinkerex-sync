@@ -1,5 +1,19 @@
 module V1
   class CommitsController < BaseController
+    # STAGE 3a TASK 5: stash_request_base_url and the two Sync::Commit rescues below used to live
+    # on V1::BaseController, which every v1/maker/* controller inherits -- see the comment there
+    # for the argument. Both belong here instead: Sync::Commit.begin/.finalize are the only source
+    # of InvalidManifest/KindConflict anywhere in this codebase, and #create/#finalize below are
+    # their only callers. Covered end-to-end by real HTTP requests, not merely at the service
+    # layer: test/integration/v1/node_guards_test.rb's "commit with a traversal chunk hash is
+    # rejected (422)" drives InvalidManifest through this exact rescue, and its "committing a file
+    # onto an existing dir node is rejected (409)" drives KindConflict through the other.
+    include V1::StashRequestBaseUrl
+    rescue_from Sync::Commit::InvalidManifest, with: :unprocessable
+    # Changing an existing node's kind, or two devices racing to insert the same node_id, is a
+    # conflict (409) — a clean, retriable result — not a 500.
+    rescue_from Sync::Commit::KindConflict, with: :conflict
+
     # The two-phase content commit: the sync engine's write path, chunks and all.
     require_capability! :syncable
 
@@ -34,20 +48,26 @@ module V1
       version, seq = Sync::Commit.finalize(user: current_user, commit_id: params[:commit_id],
                                            verify: Rails.configuration.x.verify_finalize)
       LibraryChannel.broadcast_change(current_user, seq)
-      # Eagerly render a thumbnail for a file synced from the desktop/API client (not just web
-      # uploads). content_token == version_id in chunk mode; best-effort, never fails the commit.
+      # PUBLISH, DON'T CALL (Stage 3a Task 4). This used to fire ::Maker::Previews::Enqueue and
+      # ::Maker::ProjectIntakeJob.nudge directly — the engine reaching into the host's own
+      # features, not shared data. See Sync::Hooks for the full argument and its three properties;
+      # the host's two subscribers, unchanged in behaviour, now live in
+      # config/initializers/sync_hooks.rb.
+      #
+      # Sync::Commit.finalize's transaction has already committed by this line — its
+      # `ApplicationRecord.transaction do…end` closes, and the method returns `[version, seq]`,
+      # before this method does anything below it. Firing the hook HERE, rather than from inside
+      # that transaction, is what makes Sync::Hooks' property 1 ("after the commit, never inside
+      # it") hold; moving this call earlier would break it. Proved in
+      # test/integration/v1/commit_finalize_transaction_boundary_test.rb, which fails if the call
+      # is moved inside a transaction.
+      #
+      # `node` can be nil in principle — looked up fresh here rather than reusing anything
+      # Sync::Commit.finalize touched internally, unchanged from before this refactor — and
+      # neither subscriber can do anything useful without it, so the guard stays at the publish
+      # site rather than moving into Sync::Hooks itself.
       node = current_user.nodes.find_by(node_id: version.node_id)
-      if node
-        ::Maker::Previews::Enqueue.call(user: current_user, node_id: version.node_id,
-                                        name: node.name, version_id: version.version_id)
-        # And file it, if it landed at a project folder's root — closing §12.10's "a device push
-        # gets no eager nudge". Deliberately HERE rather than in Sync::Commit#finalize: a controller
-        # is the top layer and already reaches into Maker:: for the preview above, whereas a maker
-        # call inside Sync::Commit would invert the layering (the sync engine is what the maker
-        # layer is built ON). See .nudge for why this is an async, deduplicated enqueue rather than
-        # the synchronous sweep §12.10 rejected.
-        ::Maker::ProjectIntakeJob.nudge(user: current_user, node:)
-      end
+      Sync::Hooks.commit_finalized(user: current_user, node:, version:) if node
       render json: { version_id: version.version_id, seq: }
     rescue Sync::Commit::ChunksMissing => e
       render json: { error: "chunks_missing", missing: e.hashes }, status: :unprocessable_entity

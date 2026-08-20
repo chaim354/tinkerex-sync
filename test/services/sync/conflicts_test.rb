@@ -143,7 +143,7 @@ module Sync
       assert_equal v2.version_id, @user.nodes.find_by(node_id: @node_id).current_version_id,
                    "original node keeps its current version"
       siblings = @user.nodes.where(parent_node_id: nil, deleted: false).where.not(node_id: @node_id)
-      manifests = siblings.map { |n| n.current_version.manifest_id }
+      manifests = siblings.map { |n| @user.versions.find_by(version_id: n.current_version_id).manifest_id }
       assert_includes manifests, b_edit.manifest_id, "B's edit split into a sibling"
       assert_includes manifests, c_edit.manifest_id, "C's edit split into a sibling"
     end
@@ -200,7 +200,8 @@ module Sync
       copy = @user.nodes.find_by(node_id: new_node_id)
       assert copy, "a conflicted-copy node was created"
       assert_includes copy.name, "conflict from workshop-pi"
-      assert_equal incoming.manifest_id, copy.current_version.manifest_id, "reuses the incoming manifest"
+      assert_equal incoming.manifest_id, @user.versions.find_by(version_id: copy.current_version_id).manifest_id,
+                   "reuses the incoming manifest"
       # Chunks reused (refcount bumped), not re-uploaded.
       assert_equal ref_before + 1, @user.chunks.find_by(chunk_hash: Digest::SHA256.hexdigest("the other edit")).refcount
     end

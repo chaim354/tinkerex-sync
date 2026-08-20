@@ -1,4 +1,45 @@
 module Sync
+  # SEAM for Stage 3b, not a settled fact (Stage 3a plan, Task 3). Until the sync engine is
+  # genuinely separable there is no engine OBJECT to ask "are you mounted", so this predicate
+  # answers the question the only honest way available today: which LIBRARY_BACKEND is this
+  # deployment running. `lib/postgres_pooler_check.rb`'s boot guard is the one caller
+  # (`PostgresPoolerCheck.probe?`'s `engine_present:` default) — it exists solely to protect
+  # `User#next_seq!`'s row lock, which only a chunk deployment ever calls, so a share or s3
+  # deployment must never be refused a boot behind a statement-mode pooler over a rule that
+  # cannot apply to it.
+  #
+  # NOT `LIBRARY_BACKEND == "chunk"` INLINED AT THE CALL SITE, AND NOT
+  # `FileLayer.current.capabilities.syncable?` EITHER, though both read the same three backends
+  # today and would agree with this method on all of them. §14a's whole argument is that such
+  # agreement is a coincidence of having exactly three backends, not an identity — `scannable` is
+  # not `!syncable?`, `port_writable` is not `scannable`, and encoding one of those coincidences
+  # once already (`is_a?(Share)`) is how it silently went wrong the moment a second backend
+  # arrived. `syncable?` in particular asks a DIFFERENT question that only happens to share
+  # today's answer: whether the maker layer's file tree arrives via the changelog, not whether a
+  # changelog and its seq allocator exist AT ALL. Spelling this method as a reference to that one
+  # would silently disable a lock-corruption guard the day a backend answers `syncable? == false`
+  # while still running the engine for some other reason — exactly the kind of assumption §14a
+  # keeps finding broken in practice, not a hypothetical.
+  #
+  # A NAMED, OWNED predicate is what lets Stage 3b change ONLY this method's body — to something
+  # like "is there a mounted Sync::Engine railtie", or a flag the engine sets when present — with
+  # no caller anywhere needing to change. Reuse this name rather than re-deriving the question
+  # from LIBRARY_BACKEND a second time somewhere else.
+  #
+  # `env:` is a kwarg default rather than a captured constant or ivar — same shape as
+  # `PostgresPoolerCheck.probe?`'s own `env:`, for the same reason: ENV is re-read on every call,
+  # so a value injected by one test cannot leak into the next.
+  # THE NAME DESCRIBES WHAT THIS WILL MEAN, NOT WHAT IT MEASURES TODAY, and a final review was right
+  # to call that out. In this monorepo the Sync module is loaded unconditionally on every backend --
+  # nothing about the engine's PRESENCE in the process varies. What varies is whether this deployment
+  # USES it, which is what LIBRARY_BACKEND actually answers. The name is deliberate anyway: it is the
+  # question 3b's caller wants to ask, and 3b replaces this body with a real engine object without
+  # touching a single call site. Until then, read the body, not the name, before adding a caller --
+  # there is exactly one today (PostgresPoolerCheck.probe?).
+  def self.engine_present?(env: ENV)
+    env.fetch("LIBRARY_BACKEND", "chunk") == "chunk"
+  end
+
   # Shared bulk-loading helper for the read serializers (G11 scale validation).
   #
   # Manifests are stored as `manifest_chunks` rows keyed by the string `manifest_id`

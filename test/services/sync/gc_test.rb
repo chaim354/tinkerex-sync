@@ -292,6 +292,35 @@ module Sync
       end
     end
 
+    # THIS TEST IS ALSO THE STAGE 3a TASK 6 ARCHITECTURE GUARD, not merely a feature-correctness
+    # check (it predates Task 6 by five weeks — 2026-07-15 — and was written for a plain product
+    # bug: "Fix 3" above). Boundary design §1 names `Sync::Gc.apply_retention!` reading
+    # `share_links` as the single highest-severity finding in the whole Stage 3 split: sever that
+    # read and NOTHING notices at build time — no missing constant, no broken require — because
+    # `user.share_links` still resolves (it's an ordinary AR association) and `apply_retention!`
+    # still runs to completion. The nightly RetentionJob would just quietly start pruning versions
+    # that a live share link still points at, destroying the bytes behind a URL a user already
+    # sent someone. This test is the one thing standing between that refactor and production.
+    #
+    # MUTATION-CHECKED (2026-08-20, CLAUDE.md §15): deleting
+    # `app/services/sync/gc.rb`'s `user.share_links.each { ... }` line from
+    # `referenced_version_ids` turns this test — and only this test, in this file — red:
+    #
+    #   Failure:
+    #   Sync::GcTest#test_tiered_retention_keeps_a_version_referenced_by_a_live_share_link
+    #   a live share link's frozen version must not be pruned
+    #
+    # `keep_all` (the self-host default) would NOT exercise this: it never decrements anything, so
+    # a version would survive with or without the referenced-ids union and the test would pass for
+    # the wrong reason. `tiered` is used deliberately, because it is a policy that actually prunes.
+    #
+    # Why moving share_links into SYNC_SIDE_GLOBS (test/architecture_invariants_test.rb) closes the
+    # hazard rather than merely relabeling it: `Sync::Gc`, `ShareLink` and `Sharing::Links` are now
+    # all on the SAME side of the maker/engine boundary, so a future repo split (Stage 3b) that
+    # extracts the engine wholesale carries this coupling with it intact. What this test guards
+    # against is someone deciding, later, that share links are "really" a maker feature and moving
+    # `ShareLink`/`Sharing::Links` back across the line while `Sync::Gc` stays put — this is the
+    # test that must go red the moment that happens.
     test "tiered retention keeps a version referenced by a live share link" do
       nid = SecureRandom.uuid
       vs = make_history!(node_id: nid, ages: [ 1.minute, 5.days, 5.days + 1.hour ])

@@ -11,6 +11,10 @@
 # This module performs a best-effort boot probe: open a transaction and check that two statements
 # observe the SAME backend pid AND that a session-scoped advisory lock taken in statement 1 is
 # still held in statement 2. Under statement-mode pooling these diverge.
+#
+# ENGINE-CONDITIONAL since Stage 3a: this whole module protects `User#next_seq!`'s row lock and
+# NOTHING ELSE, and a share/s3 deployment has no changelog and never calls it — see `probe?`'s
+# `engine_present:` kwarg below, and Sync.engine_present? for the full argument.
 module PostgresPoolerCheck
   ADVISORY_KEY = 424242
 
@@ -18,12 +22,21 @@ module PostgresPoolerCheck
 
   # Should the boot probe run at all? PURE — no connection, no I/O, so it is assertable on every
   # CI leg (all of which are SQLite). It answers ELIGIBILITY only: is this adapter one the probe
-  # applies to, and has the operator opted out. It says nothing about the OUTCOME — that is
-  # `probe` + the initializer's warn/raise branch.
+  # applies to, has the operator opted out, and — Stage 3a — does this DEPLOYMENT even have the
+  # thing the probe protects. It says nothing about the OUTCOME — that is `probe` + the
+  # initializer's warn/raise branch.
+  #
   # `env:` is a kwarg default rather than a captured constant or ivar, so ENV is re-read on every
-  # call and a hash injected by one test cannot leak into the next.
-  def self.probe?(adapter:, env: ENV)
+  # call and a hash injected by one test cannot leak into the next. `engine_present:` is the same
+  # shape for the same reason, defaulting to Sync.engine_present? — a share or s3 deployment has
+  # no changelog and never calls `User#next_seq!`, so it must never be refused a boot behind a
+  # statement-mode pooler for a rule that cannot apply to it. See Sync.engine_present?'s own
+  # comment for why that predicate is not `LIBRARY_BACKEND == "chunk"` inlined here, or
+  # `FileLayer.current.capabilities.syncable?` — this file only consumes the answer, it does not
+  # re-derive it.
+  def self.probe?(adapter:, env: ENV, engine_present: Sync.engine_present?)
     return false if env["DB_SKIP_POOLER_CHECK"] == "1"
+    return false unless engine_present
 
     adapter.to_s.start_with?("postgres")
   end

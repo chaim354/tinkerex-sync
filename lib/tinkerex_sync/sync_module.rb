@@ -1,3 +1,27 @@
+# LIVES IN lib/, NOT app/services/sync.rb, AND THAT IS A ZEITWERK CONSTRAINT, NOT A STYLE CHOICE.
+# `isolate_namespace Sync` (engine.rb) necessarily pre-defines the bare `Sync` module the moment
+# this gem is required -- `isolate_namespace` takes an already-resolved constant as its argument,
+# so `module Sync; class Engine < ::Rails::Engine; isolate_namespace Sync; end; end` DEFINES `Sync`
+# on its first line, at Bundler.require time, before any Zeitwerk loader (the app's or this
+# engine's own) has been constructed, let alone run `setup`.
+#
+# Zeitwerk's "explicit namespace" handling -- the mechanism that would let a file like
+# `app/services/sync.rb` add methods to the SAME module a directory `app/models/sync/` nests
+# under -- only fires for a constant Zeitwerk itself is about to autoload. A constant that is
+# ALREADY a real object when Zeitwerk scans for it is treated as satisfied: no autoload is set for
+# ANY file matching that exact root name, silently, eager_load included, with no error or
+# warning. VERIFIED with a bare Zeitwerk::Loader (no Rails): `module Sync; end` followed by
+# `push_dir` + `setup` (then `eager_load`) never requires a same-named `sync.rb` at that root, and
+# a method defined in it is simply never callable. This is what broke boot the first time this file
+# moved from the host's `app/services/sync.rb` into `app/services/` here unchanged: the diagnosis
+# ("the engine's own Zeitwerk loader will own it") assumed Zeitwerk could re-associate an
+# already-open module with a file, and it cannot.
+#
+# The fix is the same one `table_name_prefix` (engine.rb) already uses for the identical problem:
+# skip autoloading entirely and reopen `Sync` from plain, eagerly-`require`d code (see
+# lib/tinkerex_sync.rb's `require "tinkerex_sync/sync_module"`). This is also the standard shape
+# for isolated-engine, module-level config methods elsewhere (Devise's lib/devise.rb, not
+# app/models/devise.rb) -- not a workaround invented for this file.
 module Sync
   # SEAM for Stage 3b, not a settled fact (Stage 3a plan, Task 3). Until the sync engine is
   # genuinely separable there is no engine OBJECT to ask "are you mounted", so this predicate

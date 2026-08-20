@@ -42,7 +42,7 @@ module FileLayer
 
     def stat(user, node_id:)
       node = live_node!(user, node_id)
-      file_info(node, node.current_version&.size)
+      file_info(node, current_version_for(user, node)&.size)
     end
 
     # Describe MANY nodes in a number of queries that does not grow with the list — what a browse
@@ -112,7 +112,7 @@ module FileLayer
         if content_token.present?
           user.versions.find_by(node_id:, version_id: content_token)
         else
-          node.current_version
+          current_version_for(user, node)
         end
       raise NotFound, "no version for node #{node_id.inspect}" unless version
 
@@ -150,7 +150,7 @@ module FileLayer
       # The same liveness guard read applies: a tombstoned node is GONE on every backend, and
       # download must not be the hole in that.
       node = live_node!(user, node_id)
-      version = node.current_version
+      version = current_version_for(user, node)
       raise NotFound, "no version for node #{node_id.inspect}" unless version
 
       chunks = version.manifest_chunks.to_a
@@ -314,7 +314,7 @@ module FileLayer
       LibraryChannel.broadcast_change(user, seq) if broadcast && seq
       node = user.nodes.find_by(node_id: version.node_id)
       UploadFinalized.new(version_id: version.version_id, seq:,
-                          info: node ? file_info(node, node.current_version&.size) : nil)
+                          info: node ? file_info(node, current_version_for(user, node)&.size) : nil)
     rescue Sync::Commit::ChunksMissing => e
       raise ChunksMissing, e.hashes
     end
@@ -384,7 +384,7 @@ module FileLayer
         n.name = new_name
       end
       LibraryChannel.broadcast_change(user, seq)
-      file_info(node, node.current_version&.size)
+      file_info(node, current_version_for(user, node)&.size)
     end
 
     # Sync::SubtreeDelete, NOT Sync::Mutation.apply(op: "delete"): the latter tombstones only the
@@ -475,7 +475,7 @@ module FileLayer
         raise(NotFound, "node #{node_id.inspect} does not exist")
       node, seq = Sync::Trash.restore(user:, node_id:, to_root: true)
       LibraryChannel.broadcast_change(user, seq) if seq
-      file_info(node, node.current_version&.size)
+      file_info(node, current_version_for(user, node)&.size)
     end
 
     # Normalize over the chunk-store backends.
@@ -528,6 +528,19 @@ module FileLayer
     def live_node!(user, node_id)
       user.nodes.present.find_by(node_id:) ||
         raise(NotFound, "node #{node_id.inspect} is deleted or does not exist")
+    end
+
+    # WAS Node#current_version, which is host code querying an engine table (`versions` moves to the
+    # sync engine; `nodes` does not). Moved here because this adapter is the one file allowed to know
+    # versions exist, and it was the only caller.
+    #
+    # NOT a convenience wrapper to reuse widely: it is one query per node, and the codebase already
+    # routes bulk paths around it for exactly that reason -- V1::TrashController uses
+    # Sync.load_version_sizes with a comment saying why. If a second caller ever wants this, that is
+    # the signal it should be batched, not shared.
+    def current_version_for(user, node)
+      return nil if node.current_version_id.blank?
+      user.versions.find_by(version_id: node.current_version_id)
     end
 
     # ONE QUESTION, ONE ANSWER, ONE MESSAGE -- "is any live node of any kind already at

@@ -24,9 +24,9 @@ module FileLayer
       # port_writable: false — and this is NOT "chunk mode can't take uploads", which it does
       # all day. It says the port is the wrong door for BYTES: the UI must drive Sync::Commit's
       # two-phase presigned flow, which is why write below refuses. Read as "accepts uploads" it
-      # would hide the upload button in the product's main deployment. mkdir, move and delete are
-      # METADATA verbs, not bytes, so this capability does not gate them -- all three now go
-      # through the port on every backend regardless of what this flag says (CLAUDE.md 14a:
+      # would hide the upload button in the product's main deployment. mkdir, move, delete and
+      # undelete are METADATA verbs, not bytes, so this capability does not gate them -- all four
+      # now go through the port on every backend regardless of what this flag says (CLAUDE.md 14a:
       # port_writable answers which upload flow the UI drives, not "does this op work").
       Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false,
                        port_writable: false, dir_deletable: true)
@@ -182,8 +182,8 @@ module FileLayer
     # Sync::Commit's two-phase presigned flow -- and this is that door's honest refusal rather
     # than an absent method: implementing write here would mean a server-side chunk-and-commit
     # path that duplicates Sync::Commit, has no caller, and reaches into the sync engine this
-    # port exists to stay out of (spec §10). mkdir/move/delete below are METADATA verbs, not
-    # bytes, so none of that argument binds them -- they go through the port on every backend,
+    # port exists to stay out of (spec §10). mkdir/move/delete/undelete below are METADATA verbs,
+    # not bytes, so none of that argument binds them -- they go through the port on every backend,
     # chunk included (see each one's own comment for its history).
     #
     # It exists, rather than being absent, so the answer is an honest error instead of a
@@ -286,6 +286,57 @@ module FileLayer
       seq = Sync::SubtreeDelete.call(user:, node:)
       LibraryChannel.broadcast_change(user, seq)
       nil
+    end
+
+    # THE FOURTH AND LAST METADATA VERB (Task 6) -- the port is now the door for chunk-mode
+    # undelete too. TrashController used to branch on port_writable? and call Sync::Trash.restore
+    # directly for the chunk leg; it no longer can, same reason mkdir/move/delete's own comments
+    # give -- in remote mode there is no Sync::Trash in this process to branch into.
+    #
+    # `to_root: true`, MATCHING WHAT TrashController#restore HAS ALWAYS PASSED ON THE CHUNK
+    # BRANCH. An ORPHAN -- a node whose parent is itself tombstoned -- has no path to restore
+    # under, so Sync::Trash puts it at the root instead of raising ParentDeleted at a user who
+    # only clicked Restore.
+    #
+    # V1::TrashController KEEPS ITS OWN DIRECT Sync::Trash.restore CALL, WITH A CALLER-SUPPLIED
+    # to_root: -- do not collapse that one too. It is sync-engine code moving to the sync repo in
+    # Stage 3, and the device API genuinely offers the choice this web door does not: a client can
+    # ask for the strict answer (409 parent_deleted) and prompt its own user, where a browser
+    # Restore click has no such UI and would rather succeed at the root than 500.
+    #
+    # RESTORE ORDER IS NOT COMMUTATIVE, AND TASK 5'S CASCADE MADE THAT MAINLINE RATHER THAN A RARE
+    # HAND-CRAFTED EDGE CASE. Sync::Trash.restore(to_root: true) NULLS parent_node_id when the
+    # parent is tombstoned, and a directory delete now tombstones its whole subtree in one call
+    # (Sync::SubtreeDelete) -- so restoring a CHILD before its PARENT permanently rewrites that
+    # pointer. Restoring the parent AFTERWARD does not reunite them: the child's parent_node_id is
+    # already nil, and reviving the parent touches nothing the child still points at. Before
+    # delete cascaded, reaching this took two DELIBERATE deletes; now one folder delete is enough,
+    # so a bottom-up restore scatters that folder's contents to the root, irreversibly. NOT FIXED
+    # HERE: top-down restore (parent, then children) already preserves structure, and ordering the
+    # restores is a caller's job, not this adapter's -- see the non-commutativity test for the
+    # pinned behaviour.
+    #
+    # THE COLLISION HOLE STAYS OPEN, DELIBERATELY. Sync::Trash.restore has no
+    # destination_vacant!-style check anywhere in it, so on chunk a revive CAN produce two live
+    # nodes sharing one (parent_node_id, name) -- share and s3 both refuse that clobber inside
+    # their own #undelete (Share's `dest.exist?`; S3's own destination_vacant!). Pre-existing, not
+    # introduced by this move behind the port -- the same hole existed when TrashController called
+    # Sync::Trash.restore directly. Closing it changes sync-engine semantics the device API
+    # (V1::TrashController) also depends on, which is its own decision, not a rider on a refactor
+    # that is only supposed to change WHERE a call is made.
+    #
+    # THE `if seq` GUARD IS NOT PADDING. Sync::Trash.restore returns [node, nil] when the named
+    # node is not actually deleted (an early return -- no mutation, no changelog entry), and
+    # broadcasting THAT would tell every device to pull for a change that never happened.
+    #
+    # RETURNS A FileInfo, NOT delete's nil -- and that is not a stylistic choice, it is delete's
+    # WRONG precedent for this verb. delete changes no field FileInfo exposes, so its nil costs
+    # nothing; undelete can silently reparent a node to the root (see above), and
+    # TrashController#restore's flash message reads info.name straight off this return value.
+    def undelete(user, node_id: nil)
+      node, seq = Sync::Trash.restore(user:, node_id:, to_root: true)
+      LibraryChannel.broadcast_change(user, seq) if seq
+      file_info(node, node.current_version&.size)
     end
 
     # Normalize over the chunk-store backends.

@@ -43,7 +43,7 @@ module V1
 
     private
 
-    def redeem! = Sharing::Links.redeem(params[:token])
+    def redeem! = Sync::Sharing::Links.redeem(params[:token])
     def not_found = render(json: { error: "not_found" }, status: :not_found)
 
     # Mirror BaseController: for the `local` chunk backend, point presigned blob URLs back at

@@ -1,5 +1,5 @@
 require "test_helper"
-require "postgres_pooler_check"
+require "sync/postgres_pooler_check"
 
 # Unit tests for the Postgres connection-pooler safety probe (G2). The probe detects a
 # STATEMENT-mode pooler, which would silently break User#next_seq!'s transaction-spanning
@@ -28,7 +28,7 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
   test "probe passes on a direct (session-mode) Postgres connection" do
     skip "Postgres-only (set DATABASE_URL=postgres…)" unless postgres?
     result = ActiveRecord::Base.connection_pool.with_connection do |conn|
-      PostgresPoolerCheck.probe(conn)
+      Sync::PostgresPoolerCheck.probe(conn)
     end
     assert_nil result.error, "probe should not error on a direct connection: #{result.error&.message}"
     assert result.same_backend, "two statements in one tx must hit the same backend pid"
@@ -37,8 +37,8 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
   end
 
   test "failure_message names the changelog risk and the fix" do
-    msg = PostgresPoolerCheck.failure_message(
-      PostgresPoolerCheck::Result.new(ok: false, same_backend: false, lock_held: false, error: nil)
+    msg = Sync::PostgresPoolerCheck.failure_message(
+      Sync::PostgresPoolerCheck::Result.new(ok: false, same_backend: false, lock_held: false, error: nil)
     )
     assert_includes msg, "STATEMENT-mode"
     assert_includes msg, "next_seq!"
@@ -66,7 +66,7 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
   # first failure, so an inverted adapter check would report ONE failure instead of two and the
   # Postgres direction would never be shown to carry weight.
   test "probe? refuses a non-Postgres adapter" do
-    refute PostgresPoolerCheck.probe?(adapter: "sqlite3"), "the PG-only probe must never run on SQLite"
+    refute Sync::PostgresPoolerCheck.probe?(adapter: "sqlite3"), "the PG-only probe must never run on SQLite"
   end
 
   test "probe? accepts a Postgres adapter" do
@@ -74,12 +74,12 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
     # whole point is the ADAPTER match, and it must stay TRUE regardless of which `bin/ci` leg is
     # running — the default reads ambient LIBRARY_BACKEND, which is "share"/"s3" for two of the
     # three legs and would silently flip this assertion false without this pin.
-    assert PostgresPoolerCheck.probe?(adapter: "postgresql", engine_present: true),
+    assert Sync::PostgresPoolerCheck.probe?(adapter: "postgresql", engine_present: true),
            "an over-matching guard would silently disable the probe on real Postgres"
   end
 
   test "probe? honours the DB_SKIP_POOLER_CHECK escape hatch" do
-    refute PostgresPoolerCheck.probe?(adapter: "postgresql", env: { "DB_SKIP_POOLER_CHECK" => "1" }),
+    refute Sync::PostgresPoolerCheck.probe?(adapter: "postgresql", env: { "DB_SKIP_POOLER_CHECK" => "1" }),
            "DB_SKIP_POOLER_CHECK=1 is the bypass failure_message tells operators to use"
   end
 
@@ -88,13 +88,13 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
   # failure, so folding both directions into one test would let either direction go unproven
   # without the suite ever saying so.
   test "probe? refuses to run when the engine is absent, even for a Postgres adapter" do
-    refute PostgresPoolerCheck.probe?(adapter: "postgresql", env: {}, engine_present: false),
+    refute Sync::PostgresPoolerCheck.probe?(adapter: "postgresql", env: {}, engine_present: false),
            "a share/s3 deployment has no changelog and must never be refused a boot over " \
            "next_seq!'s lock rule"
   end
 
   test "probe? still runs when the engine is present" do
-    assert PostgresPoolerCheck.probe?(adapter: "postgresql", env: {}, engine_present: true),
+    assert Sync::PostgresPoolerCheck.probe?(adapter: "postgresql", env: {}, engine_present: true),
            "the engine gate must not swallow the original adapter check for a chunk deployment"
   end
 
@@ -113,7 +113,7 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
     { "chunk" => true, "share" => false, "s3" => false }.each do |backend, expected|
       with_env("LIBRARY_BACKEND" => backend) do
         assert_equal expected,
-                     PostgresPoolerCheck.probe?(adapter: "postgresql"),
+                     Sync::PostgresPoolerCheck.probe?(adapter: "postgresql"),
                      "with LIBRARY_BACKEND=#{backend}, probe? must follow Sync.engine_present? " \
                      "through its own default -- not a value a caller happened to pass"
       end

@@ -6,7 +6,15 @@
 # It delegates entirely to Sync::Gc.apply_retention! — the tested mechanism — so this job
 # stays a thin scheduler. Per-user work is isolated: one user's error is logged and the
 # sweep continues for the rest (a bad row shouldn't stall the whole library's GC).
-class RetentionJob < ApplicationJob
+#
+# STAGE 3b PHASE A CLOSE-OUT moved this from the bare top-level `RetentionJob` to
+# `Sync::RetentionJob` — one of five bare engine constants a close-out review found after
+# Tasks 3/4 (CLAUDE.md §14j), missed because neither task's file-set walk was rooted at
+# `app/jobs/`. Compact form, explicit `::ApplicationJob`, matching Task 3's
+# `Sync::Version < ::ApplicationRecord`: `ApplicationJob` is host boilerplate, and an
+# unqualified reference resolves today only via the top-level fallback that Phase B's
+# `isolate_namespace Sync` will remove.
+class Sync::RetentionJob < ::ApplicationJob
   queue_as :background
 
   # ONE RETENTION PASS AT A TIME, GLOBALLY — this job iterates every user itself, so there is no

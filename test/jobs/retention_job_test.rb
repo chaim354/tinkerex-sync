@@ -38,7 +38,7 @@ class RetentionJobTest < ActiveSupport::TestCase
     n2, = thinnable_history!(other)
 
     ENV["RETENTION_POLICY"] = "tiered"
-    RetentionJob.perform_now(grace: 0)
+    Sync::RetentionJob.perform_now(grace: 0)
 
     # Each user's same-old-day pair was thinned to one survivor (+ current) → 2 versions.
     assert_equal 2, @user.versions.where(node_id: n1).count, "user 1 history thinned"
@@ -56,7 +56,7 @@ class RetentionJobTest < ActiveSupport::TestCase
     @user.nodes.create!(node_id: nid, name: "f", kind: "file", current_version_id: v2.version_id)
 
     assert_no_difference -> { @user.versions.count } do
-      RetentionJob.perform_now
+      Sync::RetentionJob.perform_now
     end
   end
 end

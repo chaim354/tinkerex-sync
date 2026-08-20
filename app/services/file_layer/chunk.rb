@@ -199,6 +199,105 @@ module FileLayer
       raise NotImplementedError, WRITE_MSG
     end
 
+    # --- Upload: phase 1 (begin) ---------------------------------------------------------------
+    #
+    # THE LAST TWO MAKER-LAYER CALL SITES THAT NAMED Sync:: DIRECTLY (Task 8) — begin_upload and
+    # finalize_upload below lift Sync::Commit's presigned two-phase flow onto the port, closing
+    # FilesController#begin_upload/#finalize_upload and
+    # Maker::Addons::LibraryOutput#write_chunk's own Sync::Commit calls. THIS IS NOT A BYTE-TAKING
+    # WRITE AND MUST NEVER BECOME ONE — `write` above still refuses for exactly the reason it always
+    # did. `begin_upload` hands back presigned PUT urls for whichever chunks storage is missing;
+    # the CALLER puts bytes there (a browser fetch(), or — for LibraryOutput, which generates the
+    # bytes server-side and has no client to presign for — a direct Storage::ChunkStore#put, kept
+    # OUTSIDE this method and outside this class entirely; see LibraryOutput#write_chunk's own
+    # comment for why that call was not folded in here). Either way this method's own body never
+    # reads or holds a byte. That is what keeps CLAUDE.md 15 true here.
+    #
+    # `node_id:` IS OPTIONAL, UNLIKE Sync::Commit.begin'S OWN SIGNATURE, WHERE IT IS REQUIRED —
+    # because "does this upload create a new file, or become a new version of a specific existing
+    # one" is a decision only the CALLER can make, and the two callers disagree: FilesController's
+    # browser flow always wants a brand-new file (it never passes one); LibraryOutput's `replace:
+    # true` flow wants a SPECIFIC existing node_id, chosen by its own #existing_at lookup. Minting
+    # one here for the common "new file" case removes a SecureRandom call from both callers rather
+    # than asking each to repeat it; passing one explicitly for the reuse case is unchanged from
+    # what LibraryOutput already computed before this task.
+    #
+    # `commit_id` IS NOT A PARAMETER AT ALL, UNLIKE node_id — neither existing caller has ever
+    # reused one across retries (each mints a fresh id per call, always), so unlike node_id there
+    # is no caller decision here for the port to defer to. Minting it internally is a pure
+    # simplification, not a behaviour choice.
+    #
+    # RE-RAISES Sync::Commit::InvalidManifest AS THE PORT'S OWN FileLayer::UnsupportedOperation,
+    # message preserved verbatim — not a new port-level class. A manifest with a malformed chunk
+    # hash or over MAX_MANIFEST_CHUNKS is a CLIENT condition, knowable only by reading THIS
+    # request, no Capabilities flag could have gated it in advance, and a different request (a
+    # valid manifest) would succeed — UnsupportedOperation's own stated axis (see its comment in
+    # file_layer.rb, which now names this as the third instance). Reusing it means
+    # FilesController's EXISTING class-level `rescue_from FileLayer::UnsupportedOperation` handles
+    # this case unchanged — same 422, same `{ error: e.message }` body — so closing this seam
+    # needed no new controller rescue at all, only deleting the redundant per-action one.
+    def begin_upload(user, name:, size:, manifest:, device:, parent_node_id: nil,
+                     node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
+      node_id ||= SecureRandom.uuid
+      result = Sync::Commit.begin(
+        user:, device:, commit_id: SecureRandom.uuid, node_id:, parent_node_id:, name:,
+        base_version_id:, size:, mtime:, manifest:, mode:
+      )
+      UploadBegun.new(commit_id: result.commit_id, node_id:, put_urls: result.put_urls,
+                      missing: result.missing)
+    rescue Sync::Commit::InvalidManifest => e
+      raise UnsupportedOperation, e.message
+    end
+
+    # --- Upload: phase 2 (finalize) ------------------------------------------------------------
+    #
+    # `verify:` DEFAULTS true — the SAFER of the two callers' existing choices, so a caller that
+    # forgets to think about it gets the confirm-the-bytes-landed check rather than silently
+    # skipping it. FilesController passes it explicitly anyway (a browser's PUT can genuinely fail
+    # or be skipped between the two phases, so confirming matters there); LibraryOutput passes
+    # false explicitly, UNCHANGED from before this task — it just wrote the bytes itself,
+    # synchronously, earlier in this same method call, so re-verifying would be a wasted storage
+    # round-trip confirming something nothing between the two calls could have altered.
+    #
+    # RE-RAISES Sync::Commit::ChunksMissing AS FileLayer::ChunksMissing, hashes preserved — unlike
+    # InvalidManifest above, no EXISTING FileLayer class carries structured data the way this one
+    # must (both callers that handle it read `.hashes` back out to tell the truth about which
+    # chunks to retry), so this genuinely needs a new member of the closed vocabulary rather than a
+    # reuse. See its definition in file_layer.rb.
+    #
+    # DOES NOT CATCH Sync::Commit::KindConflict, DELIBERATELY — neither existing caller of this
+    # method can ever trigger it. It fires only when `pending.node_id` already exists as a
+    # non-file, and both callers' node_ids are either freshly minted by #begin_upload above (a
+    # SecureRandom UUID colliding with any existing node is not a real possibility) or reused from
+    # LibraryOutput's own #existing_at, which is scoped `kind: "file"` — so a reused node_id is
+    # already guaranteed to be a file. Leaving it un-rescued preserves today's behaviour exactly
+    # (FilesController has never rescued it either), and a future caller that CAN legitimately hit
+    # it — passing an arbitrary caller-chosen node_id — should add its own mapping rather than
+    # inherit one written for a case that cannot occur here. V1::CommitsController, which genuinely
+    # can hit this (a device may reuse a node_id across syncs), maps it directly and is outside
+    # this port entirely (SYNC_SIDE_GLOBS).
+    #
+    # DOES NOT BROADCAST, UNLIKE mkdir/move/delete/undelete ABOVE — deliberately, and this is the
+    # one place this class departs from its own "the port owns the changelog nudge" pattern. Each
+    # of those four verbs has exactly one caller wanting exactly one behaviour; this one has TWO
+    # callers with DIFFERENT EXISTING behaviour for the same fact — FilesController broadcasts (a
+    # browser upload should nudge the user's other open tabs/devices), Maker::Addons::LibraryOutput
+    # never has (an addon-generated save has never notified live devices of the new file — recorded
+    # here, not fixed: whether it SHOULD is a real question, just not this task's to answer).
+    # Folding the broadcast in here would silently START broadcasting addon saves, a genuine
+    # user-visible behaviour change; instead `seq` rides back out on UploadFinalized and each
+    # caller keeps deciding for itself, exactly as it did when calling Sync::Commit.finalize
+    # directly. Mutation-checked below (chunk_test.rb): this method broadcasting nothing is the
+    # asserted behaviour, not an oversight a future editor should "fix" by adding one.
+    def finalize_upload(user, commit_id:, verify: true)
+      version, seq = Sync::Commit.finalize(user:, commit_id:, verify:)
+      node = user.nodes.find_by(node_id: version.node_id)
+      UploadFinalized.new(version_id: version.version_id, seq:,
+                          info: node ? file_info(node, node.current_version&.size) : nil)
+    rescue Sync::Commit::ChunksMissing => e
+      raise ChunksMissing, e.hashes
+    end
+
     # THE PORT IS THE DOOR, and it was a refusal until Stage 2. It changed because
     # Maker::LibraryFolder used to branch around the port into Sync::Mutation directly -- which
     # works only while the sync engine is in this process. It will not be.

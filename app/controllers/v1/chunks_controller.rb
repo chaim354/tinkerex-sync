@@ -1,5 +1,10 @@
 module V1
   class ChunksController < BaseController
+    # STAGE 3a TASK 5: this presigns a GET, so it needs the same LocalChunkStore base-url stash
+    # V1::CommitsController does (both used to get it for free from V1::BaseController). See
+    # app/controllers/concerns/v1/stash_request_base_url.rb for the full argument.
+    include V1::StashRequestBaseUrl
+
     # Hydration presigns CHUNKS, which only a chunk-mode library has -- so the gate is `syncable`
     # and emphatically NOT `presignable`. S3 answers presignable: TRUE (that is the whole point of
     # FileLayer::S3::Redirect) while having no chunk to hydrate, so gating on presignable here

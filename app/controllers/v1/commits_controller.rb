@@ -1,5 +1,19 @@
 module V1
   class CommitsController < BaseController
+    # STAGE 3a TASK 5: stash_request_base_url and the two Sync::Commit rescues below used to live
+    # on V1::BaseController, which every v1/maker/* controller inherits -- see the comment there
+    # for the argument. Both belong here instead: Sync::Commit.begin/.finalize are the only source
+    # of InvalidManifest/KindConflict anywhere in this codebase, and #create/#finalize below are
+    # their only callers. Covered end-to-end by real HTTP requests, not merely at the service
+    # layer: test/integration/v1/node_guards_test.rb's "commit with a traversal chunk hash is
+    # rejected (422)" drives InvalidManifest through this exact rescue, and its "committing a file
+    # onto an existing dir node is rejected (409)" drives KindConflict through the other.
+    include V1::StashRequestBaseUrl
+    rescue_from Sync::Commit::InvalidManifest, with: :unprocessable
+    # Changing an existing node's kind, or two devices racing to insert the same node_id, is a
+    # conflict (409) — a clean, retriable result — not a 500.
+    rescue_from Sync::Commit::KindConflict, with: :conflict
+
     # The two-phase content commit: the sync engine's write path, chunks and all.
     require_capability! :syncable
 

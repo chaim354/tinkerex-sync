@@ -97,4 +97,36 @@ class PostgresPoolerCheckTest < ActiveSupport::TestCase
     assert PostgresPoolerCheck.probe?(adapter: "postgresql", env: {}, engine_present: true),
            "the engine gate must not swallow the original adapter check for a chunk deployment"
   end
+
+  # THE DEFAULT ITSELF, WHICH NOTHING ELSE TOUCHES. Every other test here passes `engine_present:`
+  # explicitly -- deliberately, so a leg's ambient LIBRARY_BACKEND cannot make them flap -- and
+  # `Sync.engine_present?` is tested on its own in sync_test.rb. Both halves were covered and the
+  # WIRE BETWEEN THEM was not: a review severed the default to a hardcoded `true`, completely
+  # disconnecting it from LIBRARY_BACKEND, and the entire 2535-test suite stayed GREEN.
+  #
+  # What that silently reintroduces is the exact bug Stage 3a Task 3 fixed -- a share or s3 box
+  # refusing to boot behind a statement-mode pooler over next_seq!'s lock rule, which cannot apply
+  # to it -- and it would ship with nothing red anywhere. That is §15's dominant failure shape, so
+  # this test calls probe? with NO engine_present: override and asserts the real default answers
+  # per backend.
+  test "probe?'s engine_present default is really wired to Sync.engine_present?" do
+    { "chunk" => true, "share" => false, "s3" => false }.each do |backend, expected|
+      with_env("LIBRARY_BACKEND" => backend) do
+        assert_equal expected,
+                     PostgresPoolerCheck.probe?(adapter: "postgresql"),
+                     "with LIBRARY_BACKEND=#{backend}, probe? must follow Sync.engine_present? " \
+                     "through its own default -- not a value a caller happened to pass"
+      end
+    end
+  end
+
+  # Set ENV for the block and put it back, including restoring "was not set" rather than "" --
+  # Sync.engine_present? uses env.fetch with a default, which a blank string would defeat.
+  def with_env(pairs)
+    old = pairs.keys.to_h { |k| [ k, ENV.key?(k) ? ENV[k] : :unset ] }
+    pairs.each { |k, v| ENV[k] = v }
+    yield
+  ensure
+    old.each { |k, v| v == :unset ? ENV.delete(k) : ENV[k] = v }
+  end
 end

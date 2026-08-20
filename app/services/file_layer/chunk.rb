@@ -24,10 +24,6 @@ module FileLayer
     MOVE_MSG = 'chunk-mode move goes through the sync engine (Sync::Mutation.apply, op: "move"), ' \
                "not through FileLayer".freeze
 
-    MKDIR_MSG = 'chunk-mode mkdir goes through the sync engine (Sync::Mutation.apply, op: "mkdir"), ' \
-                "not through FileLayer — Maker::LibraryFolder branches to it; the port's mkdir is " \
-                "the share/s3 door".freeze
-
     def capabilities
       # scannable: false — chunk mode's tree comes from the sync engine's changelog, not from
       # anyone walking a store. Library::ScanJob.scan_all! reads this and no-ops here, which is the
@@ -214,8 +210,25 @@ module FileLayer
       raise NotImplementedError, MOVE_MSG
     end
 
-    def mkdir(_user, parent_node_id: nil, name: nil)
-      raise NotImplementedError, MKDIR_MSG
+    # THE PORT IS THE DOOR, and it was a refusal until Stage 2. It changed because
+    # Maker::LibraryFolder used to branch around the port into Sync::Mutation directly -- which
+    # works only while the sync engine is in this process. It will not be.
+    #
+    # IDEMPOTENT, matching Share#mkdir: Maker::LibraryFolder walks a path segment by segment and
+    # calls this for each one, so a second walk of an existing path must return the SAME node.
+    # Returning a fresh one would mint a duplicate directory on every ensure_path! of a path that
+    # already exists -- which is the common case, not the edge case.
+    def mkdir(user, parent_node_id: nil, name: nil)
+      existing = user.nodes.present.find_by(parent_node_id:, name:, kind: "dir")
+      return file_info(existing, nil) if existing
+
+      node = user.nodes.new(
+        node_id: SecureRandom.uuid, parent_node_id:, name:, kind: "dir",
+        deleted: false, mode: 0o755, mtime: (Time.current.to_f * 1e9).to_i
+      )
+      seq = Sync::Mutation.apply(user:, node:, op: "mkdir")
+      LibraryChannel.broadcast_change(user, seq)
+      file_info(node, nil)
     end
 
     # Normalize over the chunk-store backends.

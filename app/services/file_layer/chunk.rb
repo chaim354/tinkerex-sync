@@ -222,6 +222,20 @@ module FileLayer
       existing = user.nodes.present.find_by(parent_node_id:, name:, kind: "dir")
       return file_info(existing, nil) if existing
 
+      # CROSS-KIND, ON PURPOSE -- the same-kind lookup just above is scoped `kind: "dir"`, so it
+      # is BLIND to a live FILE already at this exact (parent_node_id, name). Share and S3 both
+      # refuse this collision on their own doors (Share#mkdir's `dest.exist? &&
+      # !dest.directory?`; S3#mkdir's `destination_vacant!`), and without the matching refusal
+      # here, chunk mode would silently mint a dir node ALONGSIDE the file node -- two live nodes
+      # sharing one (parent_node_id, name), which no real filesystem can represent as a single
+      # directory entry. Every mount (FUSE/CfAPI/WebDAV) eventually hits that as an
+      # unrepresentable collision. This is CLAUDE.md 14a's one-condition-two-answers shape: "the
+      # destination is taken" must mean the same thing behind every LIBRARY_BACKEND, not just on
+      # two of three -- and it is reachable through the ordinary New Folder chooser
+      # (Maker::LibraryFolder.create_child!), not merely a hypothetical.
+      colliding = user.nodes.present.find_by(parent_node_id:, name:)
+      raise UnsupportedOperation, "#{name.inspect} already exists as a #{colliding.kind}" if colliding
+
       node = user.nodes.new(
         node_id: SecureRandom.uuid, parent_node_id:, name:, kind: "dir",
         deleted: false, mode: 0o755, mtime: (Time.current.to_f * 1e9).to_i

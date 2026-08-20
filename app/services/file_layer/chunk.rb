@@ -259,10 +259,12 @@ module FileLayer
       # Maker::MoveNode.collision?'s except_node_id: parameter exists for on the web side,
       # mirrored here so the port agrees with its own caller.
       #
-      # THIS DOES NOT CLOSE CLAUDE.md 12 ITEM 11. The port now answers "the destination is taken"
-      # the same way on every backend, but the sync engine's own doors are untouched:
+      # THIS DOES NOT CLOSE CLAUDE.md 14c's RECORDED GAP. The port now answers "the destination
+      # is taken" the same way on every backend, but the sync engine's own doors are untouched:
       # Sync::Commit still validates a manifest exhaustively and the name not at all, so a device
-      # push through the mount can still land a duplicate sibling on chunk.
+      # push through the mount can still land a duplicate sibling on chunk. 14c is the right
+      # citation, not 12 item 11 -- that one is about a project-scoped upload's dedup being
+      # per-folder rather than project-wide, a different gap one layer up.
       colliding = user.nodes.present.where(parent_node_id: new_parent_node_id, name: new_name)
                       .where.not(node_id: node.node_id).first
       raise UnsupportedOperation, "#{new_name.inspect} already exists as a #{colliding.kind}" if colliding

@@ -58,6 +58,23 @@ module V1
     # owner-side counterpart does (V1::ShareLinksController: require_capability! :versioned): a
     # link can only be MINTED where there are versions, so where there are none there is nothing
     # here to presign and redeem! is on its way to 404 regardless.
+    #
+    # STILL ITS OWN COPY, NOT V1::StashRequestBaseUrl, AND THAT WAS RECONSIDERED AT STAGE 3a
+    # TASK 6, NOT OVERLOOKED. That concern's comment used to say the fold-in was "Task 6's to
+    # fold in, when share_links moves to the engine side wholesale and there is a natural single
+    # home for all three" — reasonable to expect before Task 6 actually ran, because the
+    # remaining obstacle looked like directory placement. It wasn't: the concern's gate is
+    # HARDCODED to `syncable?`, and this method's gate is `versioned?` for a stated, different
+    # reason (a share link needs a `versions` row to exist, not a chunk data plane). Those two
+    # capabilities agree on every backend this app has today — chunk true/true, share and s3
+    # false/false — but CLAUDE.md §14a spends real space insisting that kind of agreement is
+    # three samples, not an identity (`scannable` vs `!syncable?`, `port_writable` vs
+    # `scannable`, `dir_deletable` vs `syncable` are each kept separate for exactly this reason).
+    # Reusing the concern as-is would silently swap this controller's stated reason for the
+    # concern's, which is the coincidence-becomes-bug shape that whole section warns about.
+    # Making the concern's gate a parameter instead would touch two already-tested call sites
+    # (V1::CommitsController, V1::ChunksController) and their comments to save three lines of
+    # duplication here. Judged not clean enough to force; left separate on purpose.
     def stash_request_base_url
       return unless FileLayer.current.capabilities.versioned?
       if Storage::ChunkStore.current.is_a?(Storage::LocalChunkStore)

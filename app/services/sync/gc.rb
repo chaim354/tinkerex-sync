@@ -103,6 +103,19 @@ module Sync
 
     # Every version_id a retention pass must protect beyond the policy keep-set: both sides of
     # each unresolved conflict (incoming + base/current) and every live share link's version.
+    #
+    # THE `share_links` LINE BELOW IS THE HIGHEST-SEVERITY FINDING OF THE STAGE 3 BOUNDARY DESIGN
+    # (docs/superpowers/specs/2026-08-20-stage-3-boundary-design.md §1), AND STAGE 3a TASK 6 IS THE
+    # WHOLE REASON share_links NOW LIVES ON THE ENGINE SIDE OF THE BOUNDARY
+    # (test/architecture_invariants_test.rb's SYNC_SIDE_GLOBS) RATHER THAN AS A MAKER FEATURE.
+    # Delete this line, or split `ShareLink`/`Sharing::Links` away from the engine so this method
+    # can no longer see them, and NOTHING BUILDS RED: `apply_retention!` keeps running, every other
+    # test keeps passing, and the nightly RetentionJob quietly starts pruning versions that live
+    # share links still point at -- destroying the bytes behind a URL a user already sent someone,
+    # with no error anywhere. Pinned by test/services/sync/gc_test.rb's "tiered retention keeps a
+    # version referenced by a live share link", mutation-checked by deleting this exact line
+    # (verified 2026-08-20: the test goes red naming this behaviour, not merely failing to compile).
+    # If you are about to touch this line, re-run that test first.
     def self.referenced_version_ids(user)
       ids = Set.new
       user.conflicts.unresolved.pluck(:incoming_version_id, :current_version_id).each do |inc, cur|

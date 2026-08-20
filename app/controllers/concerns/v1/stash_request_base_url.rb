@@ -12,12 +12,21 @@ module V1
   #
   # INCLUDED ONLY BY THE TWO CONTROLLERS THAT PRESIGN A CHUNK URL: V1::CommitsController
   # (Sync::Commit.begin presigns PUT urls for missing chunks) and V1::ChunksController (#download
-  # presigns GET urls for hydration). V1::ShareController needs the identical affordance for a
-  # THIRD, unrelated reason (the anonymous share-link redeem side can mint GETs too) and already
-  # carries its own copy, predating this concern, with a comment saying so ("Mirror BaseController")
-  # — that duplication is Task 6's to fold in, when share_links moves to the engine side wholesale
-  # and there is a natural single home for all three. Folding it in now would touch a feature this
-  # task has no reason to touch.
+  # presigns GET urls for hydration). V1::ShareController needs the identical AFFORDANCE (the
+  # `LocalChunkStore::PUBLIC_URL_OVERRIDE` write) for a THIRD, unrelated reason — the anonymous
+  # share-link redeem side can mint GETs too — and STILL carries its own copy, on purpose, after
+  # Stage 3a Task 6 (docs/superpowers/plans/2026-08-20-stage-3a-decouple-the-engine.md) looked at
+  # folding it in. This comment used to say that fold-in was "Task 6's to fold in ... when there
+  # is a natural single home for all three" — reasonable to expect before Task 6 ran, since the
+  # remaining obstacle looked like directory placement (share_links WAS still maker-shaped then).
+  # It wasn't the real obstacle: this concern's GATE below is hardcoded to `syncable?`, and
+  # V1::ShareController's gate is `versioned?`, for a reason that stays true regardless of which
+  # side of the boundary share_links lives on (a link needs a `versions` row, not a chunk data
+  # plane). The two capabilities agree on every backend this app has today, which CLAUDE.md §14a
+  # spends real space warning is three samples, not an identity — reusing this concern as-is
+  # would silently swap ShareController's stated reason for this one's. See
+  # V1::ShareController#stash_request_base_url for the full argument; it is intentionally NOT
+  # `include V1::StashRequestBaseUrl`.
   module StashRequestBaseUrl
     extend ActiveSupport::Concern
 

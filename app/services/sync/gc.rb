@@ -41,7 +41,7 @@ module Sync
         claimed = user.versions.where(version_id: version.version_id).delete_all == 1
         next false unless claimed
 
-        hashes = ManifestChunk
+        hashes = Sync::ManifestChunk
                  .where(user_id: user.id, manifest_id: version.manifest_id)
                  .distinct.pluck(:chunk_hash)
         touch_refcounts!(user.chunks.where(chunk_hash: hashes).where("refcount > 0"), by: -1) if hashes.any?

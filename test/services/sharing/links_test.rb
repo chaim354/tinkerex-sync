@@ -12,7 +12,7 @@ class Sharing::LinksTest < ActiveSupport::TestCase
     @owner.versions.create!(version_id: @version_id, node_id: @node_id,
                             manifest_id: @manifest_id, size: 150)
     [ [ "a" * 64, 0, 100 ], [ "b" * 64, 100, 50 ] ].each_with_index do |(h, off, len), seq|
-      ManifestChunk.create!(user_id: @owner.id, manifest_id: @manifest_id, chunk_hash: h,
+      Sync::ManifestChunk.create!(user_id: @owner.id, manifest_id: @manifest_id, chunk_hash: h,
                             seq:, offset: off, length: len)
       @owner.chunks.create!(chunk_hash: h, size: len, refcount: 1)
     end
@@ -25,7 +25,7 @@ class Sharing::LinksTest < ActiveSupport::TestCase
     assert_equal @version_id, link.version_id
     assert_equal @manifest_id, link.manifest_id
     # Only the digest is stored, never the raw token.
-    assert_equal ShareLink.digest(link.raw_token), link.token_digest
+    assert_equal Sync::ShareLink.digest(link.raw_token), link.token_digest
   end
 
   test "redeem a live link returns a read capability with the version + manifest hashes" do

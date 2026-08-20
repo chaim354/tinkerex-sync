@@ -1,5 +1,5 @@
-class ChangelogEntry < ApplicationRecord
-  belongs_to :user
+class Sync::ChangelogEntry < ::ApplicationRecord
+  belongs_to :user, class_name: "::User"
 
   # `conflict` = a divergent edit recorded (not applied as current) — see Sync::Commit.
   # `symlink` = a symlink node created/updated (metadata-only, target on the node).

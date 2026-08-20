@@ -5,8 +5,8 @@
 # GETs against the OWNER's own keyspace (chunks/<user_id>/<hash>), scoped to exactly the
 # chunk hashes named by the target version's manifest. Full read/write sharing (Spaces,
 # per-Space keyspace) remains planned, not built.
-class ShareLink < ApplicationRecord
-  belongs_to :user
+class Sync::ShareLink < ::ApplicationRecord
+  belongs_to :user, class_name: "::User"
 
   validates :node_id, :version_id, :manifest_id, presence: true
   validates :token_digest, presence: true, uniqueness: true

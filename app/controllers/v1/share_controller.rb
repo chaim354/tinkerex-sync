@@ -26,7 +26,7 @@ module V1
       cap = redeem!
       return not_found unless cap
       node = User.find(cap.owner_id).nodes.find_by(node_id: cap.node_id)
-      manifest = ManifestChunk
+      manifest = Sync::ManifestChunk
                    .where(user_id: cap.owner_id, manifest_id: cap.manifest_id)
                    .order(:seq)
                    .map { |mc| { hash: mc.chunk_hash, offset: mc.offset, length: mc.length } }

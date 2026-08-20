@@ -239,12 +239,12 @@ module Sync
     end
 
     def self.upsert_manifest!(user, manifest_id, manifest)
-      return if ManifestChunk.manifest_exists?(user_id: user.id, manifest_id:)
+      return if Sync::ManifestChunk.manifest_exists?(user_id: user.id, manifest_id:)
       rows = manifest.each_with_index.map do |c, i|
         { user_id: user.id, manifest_id:, seq: i,
           chunk_hash: c["hash"], offset: c["offset"], length: c["length"] }
       end
-      ManifestChunk.insert_all(rows) if rows.any?
+      Sync::ManifestChunk.insert_all(rows) if rows.any?
     end
 
     # One refcount per unique chunk per version. New chunks inserted at refcount 1.
@@ -256,7 +256,7 @@ module Sync
       new_hashes = hashes - existing
       if new_hashes.any?
         now = Time.current
-        Chunk.insert_all(new_hashes.map { |h|
+        Sync::Chunk.insert_all(new_hashes.map { |h|
           { user_id: user.id, chunk_hash: h, size: sizes[h], refcount: 1,
             created_at: now, updated_at: now }
         })

@@ -40,10 +40,10 @@ module Sharing
     def self.create_for_version!(user:, node_id:, version_id:, expires_at: nil)
       version = user.versions.find_by!(node_id:, version_id:)
       raw = SecureRandom.urlsafe_base64(32)
-      link = ShareLink.create!(
+      link = Sync::ShareLink.create!(
         user:, node_id:, version_id:,
         manifest_id: version.manifest_id,
-        token_digest: ShareLink.digest(raw),
+        token_digest: Sync::ShareLink.digest(raw),
         expires_at:
       )
       link.define_singleton_method(:raw_token) { raw }
@@ -54,10 +54,10 @@ module Sharing
     # (unknown / expired / revoked). The chunk-hash set is read fresh from the (immutable)
     # manifest each redeem, so liveness + scope are always re-evaluated server-side.
     def self.redeem(raw)
-      link = ShareLink.find_by(token_digest: ShareLink.digest(raw))
+      link = Sync::ShareLink.find_by(token_digest: Sync::ShareLink.digest(raw))
       return nil unless link&.live?
 
-      hashes = ManifestChunk
+      hashes = Sync::ManifestChunk
                  .where(user_id: link.user_id, manifest_id: link.manifest_id)
                  .pluck(:chunk_hash).to_set
       Capability.new(owner_id: link.user_id, node_id: link.node_id,

@@ -203,9 +203,9 @@ module Sync
         h = SecureRandom.hex(32)
         Storage::ChunkStore.current.put!(@user.id, h, "bytes")
         manifest = SecureRandom.hex(8)
-        ManifestChunk.create!(user_id: @user.id, manifest_id: manifest, seq: 0,
+        Sync::ManifestChunk.create!(user_id: @user.id, manifest_id: manifest, seq: 0,
                               chunk_hash: h, offset: 0, length: 5)
-        Chunk.create!(user_id: @user.id, chunk_hash: h, size: 5, refcount: 1)
+        Sync::Chunk.create!(user_id: @user.id, chunk_hash: h, size: 5, refcount: 1)
         @user.versions.create!(version_id: SecureRandom.uuid, node_id:, manifest_id: manifest,
                                size: 5, parent_version_id: nil, created_at: age.ago)
       end
@@ -328,7 +328,7 @@ module Sync
 
       @user.share_links.create!(node_id: nid, version_id: shared.version_id,
                                 manifest_id: shared.manifest_id,
-                                token_digest: ShareLink.digest(SecureRandom.hex(16)))
+                                token_digest: Sync::ShareLink.digest(SecureRandom.hex(16)))
 
       Sync::Gc.apply_retention!(@user, policy: Sync::RetentionPolicy.for(mode: "tiered"), grace: 0)
 

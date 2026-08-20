@@ -1,5 +1,5 @@
-class PendingCommit < ApplicationRecord
-  belongs_to :user
+class Sync::PendingCommit < ::ApplicationRecord
+  belongs_to :user, class_name: "::User"
 
   validates :commit_id, presence: true, uniqueness: { scope: :user_id }
   validates :node_id, :name, :manifest_id, presence: true

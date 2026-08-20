@@ -80,7 +80,7 @@ module Sync
       v2, = commit!(name: "b", node_id: SecureRandom.uuid, chunks: same)
       assert_equal v1.manifest_id, v2.manifest_id
       # only one manifest stored despite two files
-      assert_equal 1, ManifestChunk.where(user_id: @user.id, manifest_id: v1.manifest_id).select(:manifest_id).distinct.count
+      assert_equal 1, Sync::ManifestChunk.where(user_id: @user.id, manifest_id: v1.manifest_id).select(:manifest_id).distinct.count
     end
 
     test "begin is idempotent for the same commit_id" do
@@ -263,7 +263,7 @@ module Sync
 
     def seed_chunks!(manifest)
       now = Time.current
-      Chunk.insert_all(manifest.map { |c|
+      Sync::Chunk.insert_all(manifest.map { |c|
         { user_id: @user.id, chunk_hash: c["hash"], size: c["length"],
           refcount: 1, created_at: now, updated_at: now }
       })

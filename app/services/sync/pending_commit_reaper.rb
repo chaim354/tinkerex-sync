@@ -125,7 +125,7 @@ module Sync
       # would keep a real chunk's hash in `live_pending` from this very row on a re-run). A
       # hash whose object delete failed is still reclaimable: it has no DB row, so the weekly
       # ChunkReaper (or a future identical pending) will catch it.
-      PendingCommit.where(id: expired_ids).destroy_all unless dry_run
+      Sync::PendingCommit.where(id: expired_ids).destroy_all unless dry_run
 
       if reaped.any?
         Rails.logger.info("Sync::PendingCommitReaper #{dry_run ? '[dry-run] would reap' : 'reaped'} " \

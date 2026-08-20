@@ -12,8 +12,16 @@ module FileLayer
     # port, below, same as mkdir and move before it), so this is the one refusal left here -- but
     # the lesson is the reason to keep it a named, per-op constant rather than an inline string if
     # this class ever grows another one.
-    WRITE_MSG = "chunk-mode writes go through the sync engine (Sync::Commit's two-phase " \
-                "commit), not through FileLayer".freeze
+    # AND ITS TEXT WAS WRONG THE MOMENT begin_upload/finalize_upload LANDED. It used to end
+    # "...not through FileLayer", which was true while chunk uploads bypassed the port entirely.
+    # They no longer do -- they go through the two port verbs defined below, in this same class --
+    # so the old wording sent a reader hitting this refusal straight at the Sync::Commit bypass
+    # this whole arc exists to close, which is the one move §14d's tripwire says never to make.
+    # What is refused is the BYTE-TAKING write, and only that: it would move bytes through Rails,
+    # which §15 forbids. Naming the door that IS right is the entire job of this message.
+    WRITE_MSG = "chunk-mode writes take no IO: bytes go browser-to-storage over the presigned " \
+                "URLs FileLayer#begin_upload hands out, then FileLayer#finalize_upload records " \
+                "the version (Sync::Commit's two-phase commit, underneath the port)".freeze
 
     def capabilities
       # scannable: false — chunk mode's tree comes from the sync engine's changelog, not from
@@ -289,8 +297,21 @@ module FileLayer
     # caller keeps deciding for itself, exactly as it did when calling Sync::Commit.finalize
     # directly. Mutation-checked below (chunk_test.rb): this method broadcasting nothing is the
     # asserted behaviour, not an oversight a future editor should "fix" by adding one.
-    def finalize_upload(user, commit_id:, verify: true)
+    # `broadcast:` DEFAULTS TO TRUE, AND THE DEFAULT IS THE WHOLE POINT. mkdir/move/delete/undelete
+    # broadcast unconditionally, so forgetting is structurally impossible for them; an earlier
+    # draft of this method delegated the nudge to its callers instead, on the grounds that the two
+    # it has today happen to want different things. That is exactly the "N doors that must all
+    # agree" shape §14f names as this repo's recorded failure pattern -- a third caller would
+    # simply forget, nothing would go red, and a device would silently never hear about the
+    # commit. Safe-by-default with ONE explicit opt-out is the same behaviour and a better floor.
+    #
+    # Maker::Addons::LibraryOutput passes false, preserving what addon saves have always done
+    # (never nudged; they rely on the periodic sync). That asymmetry is pre-existing and is NOT
+    # fixed here -- turning it on would start notifying every device of every addon save, a real
+    # user-visible change that does not belong in a refactor.
+    def finalize_upload(user, commit_id:, verify: true, broadcast: true)
       version, seq = Sync::Commit.finalize(user:, commit_id:, verify:)
+      LibraryChannel.broadcast_change(user, seq) if broadcast && seq
       node = user.nodes.find_by(node_id: version.node_id)
       UploadFinalized.new(version_id: version.version_id, seq:,
                           info: node ? file_info(node, node.current_version&.size) : nil)

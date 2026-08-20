@@ -50,7 +50,7 @@ module Sync
       # pointer), then versions, then devices, then the user.
       User.where(email: "seqload@example.com").find_each do |u|
         u.changelog_entries.delete_all
-        ManifestChunk.where(user_id: u.id).delete_all
+        Sync::ManifestChunk.where(user_id: u.id).delete_all
         u.chunks.delete_all
         u.pending_commits.delete_all
         u.nodes.update_all(current_version_id: nil)
@@ -137,7 +137,7 @@ module Sync
     test "concurrent full commits produce a gapless duplicate-free changelog" do
       # Exercises the REAL commit path (begin → finalize, which calls next_seq! inside its own
       # transaction alongside version/node/changelog writes), not just next_seq! in isolation.
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       device = Device.register!(user: @user, name: "loadgen")
       total = THREADS * PER_THREAD
 

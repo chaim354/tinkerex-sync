@@ -2,8 +2,8 @@
 # disconnected/crashed holder's lock frees itself. It's *advisory*: it never blocks a
 # commit (the offline path skips it entirely and conflict detection is the safety net) —
 # it exists so connected clients can avoid colliding before they diverge.
-class FileLock < ApplicationRecord
-  belongs_to :user
+class Sync::FileLock < ::ApplicationRecord
+  belongs_to :user, class_name: "::User"
 
   scope :active, -> { where("expires_at > ?", Time.current) }
 end

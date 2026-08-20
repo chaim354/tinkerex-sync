@@ -8,18 +8,18 @@ module V1
   class ChunkBlobTest < ActionDispatch::IntegrationTest
     setup do
       @dir = Dir.mktmpdir("chunk-blob-test")
-      Storage::ChunkStore.reset!
-      Storage::ChunkStore.current = Storage::LocalChunkStore.new(dir: @dir, public_url: "http://www.example.com")
+      Sync::Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.current = Sync::Storage::LocalChunkStore.new(dir: @dir, public_url: "http://www.example.com")
     end
     teardown do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       FileUtils.remove_entry(@dir) if @dir && Dir.exist?(@dir)
     end
 
     HASH = "abc123def4560000"
 
     def blob_path(user_id, hash, expires_in: 900)
-      url = Storage::LocalChunkStore.new(dir: @dir).presign_put(user_id, hash, expires_in:)
+      url = Sync::Storage::LocalChunkStore.new(dir: @dir).presign_put(user_id, hash, expires_in:)
       URI(url).request_uri # path + query, as the client would hit it
     end
 
@@ -52,11 +52,11 @@ module V1
     end
 
     test "the blob endpoints 404 when the backend is not the local store" do
-      Storage::ChunkStore.reset!
-      Storage::ChunkStore.current = Storage::MemoryChunkStore.new
+      Sync::Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.current = Sync::Storage::MemoryChunkStore.new
       # Sign with the same key so the sig check would pass; the backend guard must still 404.
       exp = (Time.now + 900).to_i
-      sig = Storage::LocalChunkStore.sign(7, HASH, exp)
+      sig = Sync::Storage::LocalChunkStore.sign(7, HASH, exp)
       get "/v1/chunks/blob/7/#{HASH}?exp=#{exp}&sig=#{sig}"
       assert_response :not_found
     end

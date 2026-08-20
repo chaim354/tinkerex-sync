@@ -94,7 +94,7 @@ module Sync
       present = known_chunk_hashes(user, hashes)
       missing = hashes.reject { |h| present.include?(h) }
 
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       put_urls = missing.index_with { |h| store.presign_put(user.id, h) }
 
       Result.new(commit_id:, missing:, put_urls:)
@@ -107,7 +107,7 @@ module Sync
       manifest_id = pending.manifest_id
 
       if verify
-        store = Storage::ChunkStore.current
+        store = Sync::Storage::ChunkStore.current
         hashes = manifest.map { |c| c["hash"] }.uniq
         known = known_chunk_hashes(user, hashes)
         # HEAD only what the DB does not already know — and ask the DB once, not once per hash.
@@ -239,12 +239,12 @@ module Sync
     end
 
     def self.upsert_manifest!(user, manifest_id, manifest)
-      return if ManifestChunk.manifest_exists?(user_id: user.id, manifest_id:)
+      return if Sync::ManifestChunk.manifest_exists?(user_id: user.id, manifest_id:)
       rows = manifest.each_with_index.map do |c, i|
         { user_id: user.id, manifest_id:, seq: i,
           chunk_hash: c["hash"], offset: c["offset"], length: c["length"] }
       end
-      ManifestChunk.insert_all(rows) if rows.any?
+      Sync::ManifestChunk.insert_all(rows) if rows.any?
     end
 
     # One refcount per unique chunk per version. New chunks inserted at refcount 1.
@@ -256,7 +256,7 @@ module Sync
       new_hashes = hashes - existing
       if new_hashes.any?
         now = Time.current
-        Chunk.insert_all(new_hashes.map { |h|
+        Sync::Chunk.insert_all(new_hashes.map { |h|
           { user_id: user.id, chunk_hash: h, size: sizes[h], refcount: 1,
             created_at: now, updated_at: now }
         })

@@ -41,7 +41,7 @@ module Sync
         claimed = user.versions.where(version_id: version.version_id).delete_all == 1
         next false unless claimed
 
-        hashes = ManifestChunk
+        hashes = Sync::ManifestChunk
                  .where(user_id: user.id, manifest_id: version.manifest_id)
                  .distinct.pluck(:chunk_hash)
         touch_refcounts!(user.chunks.where(chunk_hash: hashes).where("refcount > 0"), by: -1) if hashes.any?
@@ -158,7 +158,7 @@ module Sync
     def self.sweep_orphans!(user, grace: 1.hour)
       grace = grace.seconds if grace.is_a?(Numeric)
       cutoff = grace.ago
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       # `<=` so grace: 0 means "sweep immediately" (a chunk zeroed at `now` is collectable)
       # rather than depending on real microseconds elapsing between the refcount touch and
       # this query — which made grace-0 sweeps non-deterministic under a frozen test clock.

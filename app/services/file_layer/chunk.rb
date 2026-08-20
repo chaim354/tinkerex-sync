@@ -80,7 +80,7 @@ module FileLayer
     # true)` here would be a second definition of "the trash" alongside the one V1::TrashController
     # already serves — §9a-3's complaint exactly, and the two would drift the first time either
     # grew a rule. This adapter is the one place sync-shaped knowledge belongs (it already reads
-    # Version, ManifestChunk and Storage::ChunkStore), so it wraps that answer into the port's
+    # Version, ManifestChunk and Sync::Storage::ChunkStore), so it wraps that answer into the port's
     # shape instead of minting a rival one. Nothing in Sync::* changes (spec §10).
     #
     # EVERY tombstone is listed, with no filter, and that is chunk mode's real answer rather than
@@ -116,7 +116,7 @@ module FileLayer
         end
       raise NotFound, "no version for node #{node_id.inspect}" unless version
 
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       buf = +"".b
       version.manifest_chunks.each do |mc|
         bytes = self.class.fetch(store, user.id, mc.chunk_hash)
@@ -154,7 +154,7 @@ module FileLayer
       raise NotFound, "no version for node #{node_id.inspect}" unless version
 
       chunks = version.manifest_chunks.to_a
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
 
       # BOTH HALVES OF THIS CONDITION ARE LOAD-BEARING, and neither is the presignable? question.
       #
@@ -169,7 +169,7 @@ module FileLayer
       # `chunks.size == 1` — a redirect can only ever name ONE object. Redirecting a multi-chunk
       # file hands the browser its first chunk with a 200 and the right filename: silent
       # truncation, no error anywhere.
-      if chunks.size == 1 && store.is_a?(Storage::S3ChunkStore)
+      if chunks.size == 1 && store.is_a?(Sync::Storage::S3ChunkStore)
         return Delivery::Redirect.new(url: store.presign_get(user.id, chunks.first.chunk_hash))
       end
 
@@ -216,7 +216,7 @@ module FileLayer
     # WRITE AND MUST NEVER BECOME ONE — `write` above still refuses for exactly the reason it always
     # did. `begin_upload` hands back presigned PUT urls for whichever chunks storage is missing;
     # the CALLER puts bytes there (a browser fetch(), or — for LibraryOutput, which generates the
-    # bytes server-side and has no client to presign for — a direct Storage::ChunkStore#put, kept
+    # bytes server-side and has no client to presign for — a direct Sync::Storage::ChunkStore#put, kept
     # OUTSIDE this method and outside this class entirely; see LibraryOutput#write_chunk's own
     # comment for why that call was not folded in here). Either way this method's own body never
     # reads or holds a byte. That is what keeps CLAUDE.md 15 true here.
@@ -311,7 +311,7 @@ module FileLayer
     # user-visible change that does not belong in a refactor.
     def finalize_upload(user, commit_id:, verify: true, broadcast: true)
       version, seq = Sync::Commit.finalize(user:, commit_id:, verify:)
-      LibraryChannel.broadcast_change(user, seq) if broadcast && seq
+      Sync::LibraryChannel.broadcast_change(user, seq) if broadcast && seq
       node = user.nodes.find_by(node_id: version.node_id)
       UploadFinalized.new(version_id: version.version_id, seq:,
                           info: node ? file_info(node, current_version_for(user, node)&.size) : nil)
@@ -349,7 +349,7 @@ module FileLayer
         deleted: false, mode: 0o755, mtime: (Time.current.to_f * 1e9).to_i
       )
       seq = Sync::Mutation.apply(user:, node:, op: "mkdir")
-      LibraryChannel.broadcast_change(user, seq)
+      Sync::LibraryChannel.broadcast_change(user, seq)
       file_info(node, nil)
     end
 
@@ -383,7 +383,7 @@ module FileLayer
         n.parent_node_id = new_parent_node_id
         n.name = new_name
       end
-      LibraryChannel.broadcast_change(user, seq)
+      Sync::LibraryChannel.broadcast_change(user, seq)
       file_info(node, current_version_for(user, node)&.size)
     end
 
@@ -404,7 +404,7 @@ module FileLayer
     def delete(user, node_id: nil)
       node = live_node!(user, node_id)
       seq = Sync::SubtreeDelete.call(user:, node:)
-      LibraryChannel.broadcast_change(user, seq)
+      Sync::LibraryChannel.broadcast_change(user, seq)
       nil
     end
 
@@ -474,7 +474,7 @@ module FileLayer
       user.nodes.exists?(node_id:) ||
         raise(NotFound, "node #{node_id.inspect} does not exist")
       node, seq = Sync::Trash.restore(user:, node_id:, to_root: true)
-      LibraryChannel.broadcast_change(user, seq) if seq
+      Sync::LibraryChannel.broadcast_change(user, seq) if seq
       file_info(node, current_version_for(user, node)&.size)
     end
 

@@ -6,8 +6,8 @@ require "test_helper"
 class ChunkReaperJobTest < ActiveSupport::TestCase
   setup do
     travel_to Time.utc(2026, 6, 1, 12, 0, 0)
-    Storage::ChunkStore.reset!
-    @store = Storage::ChunkStore.current
+    Sync::Storage::ChunkStore.reset!
+    @store = Sync::Storage::ChunkStore.current
     # reap_all! enumerates the whole keyspace; wipe the persistent memory-store dir so
     # leftover objects from other tests don't inflate the count.
     FileUtils.rm_rf(@store.root)
@@ -27,7 +27,7 @@ class ChunkReaperJobTest < ActiveSupport::TestCase
     h1 = leak!(u1)
     h2 = leak!(u2)
 
-    reaped = ChunkReaperJob.perform_now
+    reaped = Sync::ChunkReaperJob.perform_now
 
     assert_equal 2, reaped
     assert_not @store.exists?(u1.id, h1)
@@ -38,7 +38,7 @@ class ChunkReaperJobTest < ActiveSupport::TestCase
     u1 = User.create!(email: "j3@example.com")
     h1 = leak!(u1)
 
-    reaped = ChunkReaperJob.perform_now(dry_run: true)
+    reaped = Sync::ChunkReaperJob.perform_now(dry_run: true)
 
     assert_equal 1, reaped
     assert @store.exists?(u1.id, h1), "dry-run job must not delete"

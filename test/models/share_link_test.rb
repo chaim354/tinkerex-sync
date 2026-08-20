@@ -6,26 +6,26 @@ class ShareLinkTest < ActiveSupport::TestCase
   end
 
   test "live? is true with no expiry and no revocation" do
-    link = ShareLink.create!(user: @user, node_id: "n1", version_id: "v1",
-                             manifest_id: "m1", token_digest: ShareLink.digest("raw"))
+    link = Sync::ShareLink.create!(user: @user, node_id: "n1", version_id: "v1",
+                             manifest_id: "m1", token_digest: Sync::ShareLink.digest("raw"))
     assert link.live?
   end
 
   test "live? is false when expired" do
-    link = ShareLink.create!(user: @user, node_id: "n1", version_id: "v1",
-                             manifest_id: "m1", token_digest: ShareLink.digest("raw"),
+    link = Sync::ShareLink.create!(user: @user, node_id: "n1", version_id: "v1",
+                             manifest_id: "m1", token_digest: Sync::ShareLink.digest("raw"),
                              expires_at: 1.hour.ago)
     refute link.live?
   end
 
   test "live? is false when revoked" do
-    link = ShareLink.create!(user: @user, node_id: "n1", version_id: "v1",
-                             manifest_id: "m1", token_digest: ShareLink.digest("raw"),
+    link = Sync::ShareLink.create!(user: @user, node_id: "n1", version_id: "v1",
+                             manifest_id: "m1", token_digest: Sync::ShareLink.digest("raw"),
                              revoked_at: Time.current)
     refute link.live?
   end
 
   test "digest is stable SHA256 of the raw token" do
-    assert_equal Digest::SHA256.hexdigest("raw"), ShareLink.digest("raw")
+    assert_equal Digest::SHA256.hexdigest("raw"), Sync::ShareLink.digest("raw")
   end
 end

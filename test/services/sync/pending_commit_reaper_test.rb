@@ -22,8 +22,8 @@ module Sync
   class PendingCommitReaperTest < ActiveSupport::TestCase
     setup do
       travel_to Time.utc(2026, 6, 1, 12, 0, 0)
-      Storage::ChunkStore.reset!
-      @store = Storage::ChunkStore.current
+      Sync::Storage::ChunkStore.reset!
+      @store = Sync::Storage::ChunkStore.current
       FileUtils.rm_rf(@store.root)
       FileUtils.mkdir_p(@store.root)
       @user = User.create!(email: "pcreaper@example.com")
@@ -76,7 +76,7 @@ module Sync
       assert_includes reaped, b
       assert_not @store.exists?(@user.id, a), "orphan chunk deleted"
       assert_not @store.exists?(@user.id, b), "orphan chunk deleted"
-      assert_nil PendingCommit.find_by(id: pc.id), "expired pending row destroyed"
+      assert_nil Sync::PendingCommit.find_by(id: pc.id), "expired pending row destroyed"
     end
 
     # ---- dedup guard: a chunk a committed version also references is SPARED ----------
@@ -91,7 +91,7 @@ module Sync
 
       assert_not_includes reaped, shared
       assert @store.exists?(@user.id, shared), "deduped committed chunk never deleted"
-      assert_nil PendingCommit.find_by(id: pc.id), "expired row still destroyed"
+      assert_nil Sync::PendingCommit.find_by(id: pc.id), "expired row still destroyed"
     end
 
     # ---- live-pending guard: a chunk another live pending references is SPARED -------
@@ -105,7 +105,7 @@ module Sync
 
       assert_not_includes reaped, shared
       assert @store.exists?(@user.id, shared), "chunk a live pending still needs is kept"
-      assert_nil PendingCommit.find_by(id: expired.id), "expired row destroyed"
+      assert_nil Sync::PendingCommit.find_by(id: expired.id), "expired row destroyed"
     end
 
     # ---- a not-yet-expired pending commit is untouched ------------------------------
@@ -118,7 +118,7 @@ module Sync
 
       assert_empty reaped
       assert @store.exists?(@user.id, a), "young pending's chunk untouched"
-      assert_not_nil PendingCommit.find_by(id: pc.id), "young pending row retained"
+      assert_not_nil Sync::PendingCommit.find_by(id: pc.id), "young pending row retained"
     end
 
     # ---- idempotent: a second run is a clean no-op ----------------------------------
@@ -154,7 +154,7 @@ module Sync
       assert_not_includes reaped, a, "failed delete is not reported as reaped"
       assert_includes reaped, b, "the rest of the sweep continued"
       assert_not @store.exists?(@user.id, b)
-      assert_nil PendingCommit.find_by(id: pc.id), "row still destroyed despite a storage error"
+      assert_nil Sync::PendingCommit.find_by(id: pc.id), "row still destroyed despite a storage error"
     end
 
     # ---- storage-age guard: a freshly RE-uploaded object is spared ------------------
@@ -170,7 +170,7 @@ module Sync
 
       assert_not_includes reaped, a, "a fresh object must not be reaped (may be a live re-upload)"
       assert @store.exists?(@user.id, a), "the freshly re-uploaded object is kept"
-      assert_nil PendingCommit.find_by(id: pc.id), "the expired pending row is still destroyed"
+      assert_nil Sync::PendingCommit.find_by(id: pc.id), "the expired pending row is still destroyed"
     end
 
     # ---- per-user scoping: never crosses tenants ------------------------------------
@@ -208,12 +208,12 @@ module Sync
       assert_empty Sync::ChunkReaper.reap!(@user, grace: 1.hour),
                    "G4 unions EVERY pending row — an expired one still protects its hash"
       assert @store.exists?(@user.id, h), "G4 leaves it in storage"
-      assert_not_nil PendingCommit.find_by(id: pc.id), "G4 never destroys a pending row"
+      assert_not_nil Sync::PendingCommit.find_by(id: pc.id), "G4 never destroys a pending row"
 
       assert_includes Sync::PendingCommitReaper.reap!(@user, ttl: 24.hours), h,
                       "this reaper excludes the rows it is destroying, so it CAN reclaim"
       assert_not @store.exists?(@user.id, h)
-      assert_nil PendingCommit.find_by(id: pc.id), "the expired row is destroyed on every path"
+      assert_nil Sync::PendingCommit.find_by(id: pc.id), "the expired row is destroyed on every path"
     end
 
     # ---- the all-users entry point --------------------------------------------------
@@ -240,7 +240,7 @@ module Sync
     #
     # EVERY TEST ABOVE RUNS ON MemoryChunkStore, WHOSE `path_for` HAS NO GUARD — `key_for(uid,
     # nil)` is the harmless string "chunks/<uid>/", so `last_modified(uid, nil)` just answers
-    # nil and the nil-hash row is SILENT there. `Storage::LocalChunkStore` (STORAGE_BACKEND=
+    # nil and the nil-hash row is SILENT there. `Sync::Storage::LocalChunkStore` (STORAGE_BACKEND=
     # local, a shipped self-host mode) validates the hash with a regex, so the same call raises
     # `NoMethodError: undefined method 'match?' for nil` — and that call sits OUTSIDE `reap!`'s
     # begin/rescue, which wraps only `store.delete`. So `reap!` aborts BEFORE `destroy_all`, the
@@ -259,8 +259,8 @@ module Sync
     # candidate Set happens to yield first.
     test "a normal expired row still reaps on a LocalChunkStore — the nil-hash wedge cannot recur" do
       dir = Rails.root.join("tmp", "pcreaper-local-#{SecureRandom.hex(6)}").to_s
-      local = Storage::LocalChunkStore.new(dir:)
-      Storage::ChunkStore.current = local
+      local = Sync::Storage::LocalChunkStore.new(dir:)
+      Sync::Storage::ChunkStore.current = local
 
       # The door must refuse this. Under the `if bad.any?` mutation it does NOT, and the
       # resulting nil-hash pending row is what wedges the sweep below.
@@ -298,7 +298,7 @@ module Sync
                       "G4 is no longer blocked from the hash by a surviving pending row"
     ensure
       FileUtils.rm_rf(dir) if dir
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
   end
 end

@@ -1,4 +1,4 @@
-module Sharing
+module Sync::Sharing
   # Lifecycle for read-only share links (create / redeem / revoke). A redeemed link
   # yields a Capability: a read-only, version-scoped view that can mint presigned GET URLs
   # for exactly that version's manifest chunks — and nothing else the owner happens to own.
@@ -9,6 +9,20 @@ module Sharing
   # version's manifest. The link can never address an arbitrary chunk — the hash set is
   # fixed at create time by the target manifest. Cross-user *write* access (which WOULD need
   # the per-Space keyspace) is out of scope; see docs/plan-sharing.md.
+  #
+  # STAGE 3b PHASE A CLOSE-OUT moved this from the bare top-level `Sharing` module to
+  # `Sync::Sharing` — one of five bare engine constants a close-out review found after
+  # Tasks 3/4 (CLAUDE.md §14j): SYNC_SIDE_GLOBS already treated `app/services/sharing/**` as
+  # engine-side (Stage 3a Task 6 — share links can't exist on share/s3, and
+  # `Sync::Gc.apply_retention!` reads `share_links` directly), but the module itself was
+  # never renamed, so it kept squatting the bare top-level name regardless. COMPACT form for
+  # this outer wrapper (`module Sync::Sharing`, not `module Sync; module Sharing`) rather
+  # than nesting a third level here: every cross-reference inside `Links` and `Capability`
+  # below was already fully `Sync::`-qualified before this move (`Sync::Storage::ChunkStore`,
+  # `Sync::ShareLink`, `Sync::ManifestChunk`), so — unlike `Sync::Version`'s own comment about
+  # `Sync::ManifestChunk` — there is no lexical-nesting trap here either way, and the compact
+  # form is the smaller, more legible change: everything from `module Links` down is
+  # unchanged, byte-for-byte, from what it was under the bare `Sharing` module.
   module Links
     # A read-only capability over one immutable version. Disjoint from device tokens: it is
     # never an authenticated session and cannot be promoted to one.
@@ -29,7 +43,7 @@ module Sharing
       # Mint presigned GET URLs for the version's chunks, against the OWNER's keyspace.
       # Bytes still flow client <-> storage directly; Rails only signs the URLs.
       def presign_urls(expires_in: 3600)
-        store = Storage::ChunkStore.current
+        store = Sync::Storage::ChunkStore.current
         @chunk_hashes.to_a.index_with { |h| store.presign_get(@owner_id, h, expires_in:) }
       end
     end
@@ -40,10 +54,10 @@ module Sharing
     def self.create_for_version!(user:, node_id:, version_id:, expires_at: nil)
       version = user.versions.find_by!(node_id:, version_id:)
       raw = SecureRandom.urlsafe_base64(32)
-      link = ShareLink.create!(
+      link = Sync::ShareLink.create!(
         user:, node_id:, version_id:,
         manifest_id: version.manifest_id,
-        token_digest: ShareLink.digest(raw),
+        token_digest: Sync::ShareLink.digest(raw),
         expires_at:
       )
       link.define_singleton_method(:raw_token) { raw }
@@ -54,10 +68,10 @@ module Sharing
     # (unknown / expired / revoked). The chunk-hash set is read fresh from the (immutable)
     # manifest each redeem, so liveness + scope are always re-evaluated server-side.
     def self.redeem(raw)
-      link = ShareLink.find_by(token_digest: ShareLink.digest(raw))
+      link = Sync::ShareLink.find_by(token_digest: Sync::ShareLink.digest(raw))
       return nil unless link&.live?
 
-      hashes = ManifestChunk
+      hashes = Sync::ManifestChunk
                  .where(user_id: link.user_id, manifest_id: link.manifest_id)
                  .pluck(:chunk_hash).to_set
       Capability.new(owner_id: link.user_id, node_id: link.node_id,

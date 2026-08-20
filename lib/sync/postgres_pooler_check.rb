@@ -15,7 +15,21 @@
 # ENGINE-CONDITIONAL since Stage 3a: this whole module protects `User#next_seq!`'s row lock and
 # NOTHING ELSE, and a share/s3 deployment has no changelog and never calls it — see `probe?`'s
 # `engine_present:` kwarg below, and Sync.engine_present? for the full argument.
-module PostgresPoolerCheck
+#
+# STAGE 3b PHASE A CLOSE-OUT moved this from the bare top-level `PostgresPoolerCheck` to
+# `Sync::PostgresPoolerCheck` — one of five bare engine constants a close-out review found
+# after Tasks 3/4 (CLAUDE.md §14j). `lib/` IS Zeitwerk-autoloaded here
+# (`config.autoload_lib(ignore: %w[assets tasks])`, config/application.rb) — verified live,
+# not assumed, because CLAUDE.md's own drafting of this task believed otherwise — so moving
+# this file to `lib/sync/` and renaming the module to the compact `Sync::PostgresPoolerCheck`
+# is exactly the Task-3/4 pattern: Zeitwerk expects `lib/sync/postgres_pooler_check.rb` to
+# define `Sync::PostgresPoolerCheck`, the same path<->constant correspondence it enforces
+# under `app/`. `lib` is SEPARATELY on `$LOAD_PATH` too (Rails::Engine's default
+# `paths.add "lib", load_path: true`, unaffected by `autoload_lib`), which is what the
+# explicit `require "sync/postgres_pooler_check"` below and in every caller relies on —
+# updated from the pre-move `require "postgres_pooler_check"` string, same mechanism, new
+# relative path.
+module Sync::PostgresPoolerCheck
   ADVISORY_KEY = 424242
 
   Result = Struct.new(:ok, :same_backend, :lock_held, :error, keyword_init: true)

@@ -47,7 +47,7 @@ module V1
     def finalize
       version, seq = Sync::Commit.finalize(user: current_user, commit_id: params[:commit_id],
                                            verify: Rails.configuration.x.verify_finalize)
-      LibraryChannel.broadcast_change(current_user, seq)
+      Sync::LibraryChannel.broadcast_change(current_user, seq)
       # PUBLISH, DON'T CALL (Stage 3a Task 4). This used to fire ::Maker::Previews::Enqueue and
       # ::Maker::ProjectIntakeJob.nudge directly — the engine reaching into the host's own
       # features, not shared data. See Sync::Hooks for the full argument and its three properties;

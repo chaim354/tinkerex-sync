@@ -52,7 +52,7 @@ module V1
     def restore
       to_root = ActiveModel::Type::Boolean.new.cast(params[:to_root])
       node, seq = Sync::Trash.restore(user: current_user, node_id: params[:node_id], to_root:)
-      LibraryChannel.broadcast_change(current_user, seq) if seq
+      Sync::LibraryChannel.broadcast_change(current_user, seq) if seq
       render json: { node_id: node.node_id, parent_node_id: node.parent_node_id, seq: }
     rescue Sync::Trash::ParentDeleted
       render json: { error: "parent_deleted" }, status: :conflict

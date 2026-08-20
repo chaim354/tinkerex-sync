@@ -14,7 +14,7 @@ module V1
     # about the deployment it was always describing.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def auth(token) = { "Authorization" => "Bearer #{token}" }

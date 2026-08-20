@@ -14,8 +14,8 @@ module Sync
   class ChunkReaperTest < ActiveSupport::TestCase
     setup do
       travel_to Time.utc(2026, 6, 1, 12, 0, 0)
-      Storage::ChunkStore.reset!
-      @store = Storage::ChunkStore.current
+      Sync::Storage::ChunkStore.reset!
+      @store = Sync::Storage::ChunkStore.current
       # The memory store persists its on-disk dir across tests (reset! only nils the
       # instance). The reaper enumerates that whole keyspace, so wipe it for a clean,
       # isolated keyspace per test.

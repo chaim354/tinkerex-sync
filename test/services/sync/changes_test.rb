@@ -7,7 +7,7 @@ module Sync
   # skipping the pruned entries.
   class ChangesTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "changes@example.com")
       @device = Device.register!(user: @user, name: "t")
     end

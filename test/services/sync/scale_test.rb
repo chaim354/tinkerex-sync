@@ -16,7 +16,7 @@ module Sync
   # with N). Adapter-agnostic — pure ActiveRecord, correct on SQLite + Postgres.
   class ScaleTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "scale@example.com")
       @device = Device.register!(user: @user, name: "t")
     end
@@ -68,10 +68,10 @@ module Sync
       end
 
       Node.insert_all(node_rows)
-      Version.insert_all(version_rows)
-      ManifestChunk.insert_all(manifest_rows) if manifest_rows.any?
-      Chunk.insert_all(chunk_rows) if chunk_rows.any?
-      ChangelogEntry.insert_all(changelog_rows)
+      Sync::Version.insert_all(version_rows)
+      Sync::ManifestChunk.insert_all(manifest_rows) if manifest_rows.any?
+      Sync::Chunk.insert_all(chunk_rows) if chunk_rows.any?
+      Sync::ChangelogEntry.insert_all(changelog_rows)
       @user.update_column(:head_seq, count)
     end
 

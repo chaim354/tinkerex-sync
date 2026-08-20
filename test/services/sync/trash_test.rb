@@ -6,7 +6,7 @@ module Sync
   # invariant) while appending exactly one changelog entry so devices converge.
   class TrashTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "trash@example.com")
       @device = Device.register!(user: @user, name: "t")
     end

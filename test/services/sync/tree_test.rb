@@ -6,7 +6,7 @@ module Sync
   # the client can build placeholders.
   class TreeTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "tree@example.com")
       @device = Device.register!(user: @user, name: "t")
     end

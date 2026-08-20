@@ -14,7 +14,7 @@ module Sync
         # Sync::Commit#finalize for the FK-KEY-SHARE-vs-FOR-UPDATE deadlock this avoids on Postgres.
         seq = user.next_seq!
 
-        hashes = ManifestChunk
+        hashes = Sync::ManifestChunk
                  .where(user_id: user.id, manifest_id: old.manifest_id)
                  .distinct.pluck(:chunk_hash)
         # Gc.touch_refcounts!, not a bare update_all: a restore re-references chunks that may sit

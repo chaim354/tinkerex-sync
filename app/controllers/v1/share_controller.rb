@@ -26,7 +26,7 @@ module V1
       cap = redeem!
       return not_found unless cap
       node = User.find(cap.owner_id).nodes.find_by(node_id: cap.node_id)
-      manifest = ManifestChunk
+      manifest = Sync::ManifestChunk
                    .where(user_id: cap.owner_id, manifest_id: cap.manifest_id)
                    .order(:seq)
                    .map { |mc| { hash: mc.chunk_hash, offset: mc.offset, length: mc.length } }
@@ -43,7 +43,7 @@ module V1
 
     private
 
-    def redeem! = Sharing::Links.redeem(params[:token])
+    def redeem! = Sync::Sharing::Links.redeem(params[:token])
     def not_found = render(json: { error: "not_found" }, status: :not_found)
 
     # Mirror BaseController: for the `local` chunk backend, point presigned blob URLs back at
@@ -77,8 +77,8 @@ module V1
     # duplication here. Judged not clean enough to force; left separate on purpose.
     def stash_request_base_url
       return unless FileLayer.current.capabilities.versioned?
-      if Storage::ChunkStore.current.is_a?(Storage::LocalChunkStore)
-        Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE.value = request.base_url
+      if Sync::Storage::ChunkStore.current.is_a?(Sync::Storage::LocalChunkStore)
+        Sync::Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE.value = request.base_url
       end
     end
   end

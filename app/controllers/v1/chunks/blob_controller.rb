@@ -33,15 +33,15 @@ module V1
       private
 
       def store
-        @store ||= Storage::ChunkStore.current
+        @store ||= Sync::Storage::ChunkStore.current
       end
 
       def ensure_local_backend
-        head(:not_found) unless store.is_a?(Storage::LocalChunkStore)
+        head(:not_found) unless store.is_a?(Sync::Storage::LocalChunkStore)
       end
 
       def verify_signature
-        ok = Storage::LocalChunkStore.verify(params[:user_id], params[:hash], params[:exp], params[:sig])
+        ok = Sync::Storage::LocalChunkStore.verify(params[:user_id], params[:hash], params[:exp], params[:sig])
         head(:forbidden) unless ok
       end
     end

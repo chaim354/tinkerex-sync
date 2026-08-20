@@ -11,7 +11,7 @@ class FileLockTest < ActiveSupport::TestCase
   # valid at the database level as a real one -- proving that stays true is not this test's job.
   test "the database itself refuses a user_id that does not exist, not just the belongs_to validation" do
     bad_user_id = (User.maximum(:id) || 0) + 999_999
-    lock = FileLock.new(user_id: bad_user_id, node_id: "n1", device_id: 0,
+    lock = Sync::FileLock.new(user_id: bad_user_id, node_id: "n1", device_id: 0,
                          expires_at: 1.hour.from_now)
 
     assert_raises(ActiveRecord::InvalidForeignKey) { lock.save!(validate: false) }

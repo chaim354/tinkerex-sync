@@ -56,7 +56,7 @@ module Sync
     return {} if ids.empty?
 
     grouped = Hash.new { |h, k| h[k] = [] }
-    ManifestChunk
+    Sync::ManifestChunk
       .where(user_id: user.id, manifest_id: ids)
       .order(:manifest_id, :seq)
       .pluck(:manifest_id, :chunk_hash, :offset, :length)

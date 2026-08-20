@@ -1,6 +1,6 @@
-# Targeted orphaned-chunk reaper job — the cheap, frequent complement to ChunkReaperJob.
+# Targeted orphaned-chunk reaper job — the cheap, frequent complement to Sync::ChunkReaperJob.
 #
-# Where ChunkReaperJob (G4) ENUMERATES the object-storage keyspace weekly (list_objects_v2
+# Where Sync::ChunkReaperJob (G4) ENUMERATES the object-storage keyspace weekly (list_objects_v2
 # is billed per request), this job does NO bucket list at all: it finds expired, never-
 # finalized `pending_commits` and deletes precisely the chunk hashes their manifests
 # uploaded (DB read + targeted deletes only). That makes it cheap enough to run HOURLY, so
@@ -12,7 +12,11 @@
 # weekly backstop can delete a chunk a slow live commit is about to finalize. See
 # Sync::PendingCommitReaper. The weekly ChunkReaper stays as the catch-all backstop for any
 # leak with no pending row to expire. Per-user errors are isolated in reap_all!.
-class PendingCommitReaperJob < ApplicationJob
+#
+# STAGE 3b PHASE A CLOSE-OUT moved this from the bare top-level `PendingCommitReaperJob` to
+# `Sync::PendingCommitReaperJob` — see app/jobs/sync/retention_job.rb's own comment for why
+# this was missed by Tasks 3/4 and the compact-form + explicit `::ApplicationJob` reasoning.
+class Sync::PendingCommitReaperJob < ::ApplicationJob
   queue_as :background
 
   def perform(ttl: Sync::PendingCommitReaper::TTL, dry_run: false)

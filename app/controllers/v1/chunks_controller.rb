@@ -36,7 +36,7 @@ module V1
       # key on a path-based S3 gateway.
       hashes = hashes.select { |h| Sync::Commit::HASH_RE.match?(h) }
       owned = current_user.chunks.where(chunk_hash: hashes).pluck(:chunk_hash).to_set
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       urls = hashes.index_with { |h| owned.include?(h) ? store.presign_get(current_user.id, h) : nil }.compact
       render json: { urls: }
     end

@@ -40,7 +40,7 @@ module Sync
     def self.reap!(user, grace: PENDING_COMMIT_TTL, dry_run: false)
       grace = grace.seconds if grace.is_a?(Numeric)
       cutoff = grace.ago
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
 
       objects = store.list(user.id)
       return [] if objects.empty?

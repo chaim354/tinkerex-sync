@@ -15,7 +15,7 @@ class ConflictTest < ActiveSupport::TestCase
   # the model's own belongs_to check, is what refuses it.
   test "the database itself refuses a user_id that does not exist, not just the belongs_to validation" do
     bad_user_id = (User.maximum(:id) || 0) + 999_999
-    conflict = Conflict.new(user_id: bad_user_id, node_id: "n1",
+    conflict = Sync::Conflict.new(user_id: bad_user_id, node_id: "n1",
                              current_version_id: "v-current", incoming_version_id: "v-incoming")
 
     assert_raises(ActiveRecord::InvalidForeignKey) { conflict.save!(validate: false) }

@@ -39,7 +39,7 @@ module FileLayer
       # presigned flow, which is why write/delete/move below refuse. Read as "accepts uploads"
       # it would hide the upload button in the product's main deployment.
       Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false,
-                       port_writable: false)
+                       port_writable: false, dir_deletable: true)
     end
 
     def stat(user, node_id:)

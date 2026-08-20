@@ -6,9 +6,9 @@ module FileLayer
   # Runs server-side (preview jobs), so it reads chunks directly rather than via presigned
   # URLs where the store allows it.
   class Chunk
-    # One message per op, NOT one shared string: these are three different doors. A shared
-    # constant is what made an earlier draft of this class tell delete/move callers to use
-    # Sync::Commit, which has no delete or move path at all.
+    # One message per op, NOT one shared string: these are two different doors. A shared
+    # constant is what made an earlier draft of this class tell delete callers to use
+    # Sync::Commit, which has no delete path at all.
     WRITE_MSG = "chunk-mode writes go through the sync engine (Sync::Commit's two-phase " \
                 "commit), not through FileLayer".freeze
 
@@ -21,9 +21,6 @@ module FileLayer
     DELETE_MSG = "chunk-mode delete goes through the sync engine (Sync::SubtreeDelete.call, " \
                  "which cascades the tombstone to the subtree), not through FileLayer".freeze
 
-    MOVE_MSG = 'chunk-mode move goes through the sync engine (Sync::Mutation.apply, op: "move"), ' \
-               "not through FileLayer".freeze
-
     def capabilities
       # scannable: false — chunk mode's tree comes from the sync engine's changelog, not from
       # anyone walking a store. Library::ScanJob.scan_all! reads this and no-ops here, which is the
@@ -31,9 +28,12 @@ module FileLayer
       # authoritative.
       #
       # port_writable: false — and this is NOT "chunk mode can't take uploads", which it does
-      # all day. It says the port is the wrong door: the UI must drive Sync::Commit's two-phase
-      # presigned flow, which is why write/delete/move below refuse. Read as "accepts uploads"
-      # it would hide the upload button in the product's main deployment.
+      # all day. It says the port is the wrong door for BYTES: the UI must drive Sync::Commit's
+      # two-phase presigned flow, which is why write/delete below refuse. Read as "accepts
+      # uploads" it would hide the upload button in the product's main deployment. mkdir and move
+      # are METADATA verbs, not bytes, so this capability does not gate them -- both now go
+      # through the port on every backend regardless of what this flag says (CLAUDE.md 14a:
+      # port_writable answers which upload flow the UI drives, not "does this op work").
       Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false,
                        port_writable: false, dir_deletable: true)
     end
@@ -206,10 +206,6 @@ module FileLayer
       raise NotImplementedError, DELETE_MSG
     end
 
-    def move(_user, node_id: nil, new_parent_node_id: nil, new_name: nil)
-      raise NotImplementedError, MOVE_MSG
-    end
-
     # THE PORT IS THE DOOR, and it was a refusal until Stage 2. It changed because
     # Maker::LibraryFolder used to branch around the port into Sync::Mutation directly -- which
     # works only while the sync engine is in this process. It will not be.
@@ -243,6 +239,40 @@ module FileLayer
       seq = Sync::Mutation.apply(user:, node:, op: "mkdir")
       LibraryChannel.broadcast_change(user, seq)
       file_info(node, nil)
+    end
+
+    # RETURNS THE POST-MOVE FileInfo, which is the port's contract and was the one real
+    # behavioural difference between the two doors Maker::MoveNode used to pick between: the port
+    # resolved the node_id into its OWN instance, so the caller's object still held the pre-move
+    # name, while the chunk door assigned the caller's object in place. A caller rendering
+    # `node.name` after a rename printed the OLD name on share/s3 only. One door, one answer.
+    def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
+      node = live_node!(user, node_id)
+
+      # THE CLOBBER REFUSAL, MATCHING mkdir'S ABOVE -- Sync::Mutation performs no name check at
+      # all, so without this, chunk would silently produce two live nodes sharing one
+      # (parent_node_id, name), exactly the collision mkdir's own refusal exists to prevent. Share
+      # and S3 both already refuse a move onto a taken name (Share#move's `File.exist?(dest)`;
+      # S3#move's `destination_vacant!`) -- CLAUDE.md 14a: "a clobber is UnsupportedOperation, and
+      # ALL THREE VERBS moved together". EXCLUDES the node being moved ITSELF, or a no-op move
+      # (same folder, same name) would collide with its own destination -- the exact case
+      # Maker::MoveNode.collision?'s except_node_id: parameter exists for on the web side,
+      # mirrored here so the port agrees with its own caller.
+      #
+      # THIS DOES NOT CLOSE CLAUDE.md 12 ITEM 11. The port now answers "the destination is taken"
+      # the same way on every backend, but the sync engine's own doors are untouched:
+      # Sync::Commit still validates a manifest exhaustively and the name not at all, so a device
+      # push through the mount can still land a duplicate sibling on chunk.
+      colliding = user.nodes.present.where(parent_node_id: new_parent_node_id, name: new_name)
+                      .where.not(node_id: node.node_id).first
+      raise UnsupportedOperation, "#{new_name.inspect} already exists as a #{colliding.kind}" if colliding
+
+      seq = Sync::Mutation.apply(user:, node:, op: "move") do |n|
+        n.parent_node_id = new_parent_node_id
+        n.name = new_name
+      end
+      LibraryChannel.broadcast_change(user, seq)
+      file_info(node, node.current_version&.size)
     end
 
     # Normalize over the chunk-store backends.

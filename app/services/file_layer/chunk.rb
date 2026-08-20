@@ -6,20 +6,14 @@ module FileLayer
   # Runs server-side (preview jobs), so it reads chunks directly rather than via presigned
   # URLs where the store allows it.
   class Chunk
-    # One message per op, NOT one shared string: these are two different doors. A shared
-    # constant is what made an earlier draft of this class tell delete callers to use
-    # Sync::Commit, which has no delete path at all.
+    # ITS OWN MESSAGE, NOT A STRING SHARED WITH ANOTHER REFUSAL: an earlier draft of this class
+    # shared one constant across write AND delete, which told delete callers to use Sync::Commit --
+    # a door that has no delete path at all. Delete no longer refuses (Stage 2 moved it onto the
+    # port, below, same as mkdir and move before it), so this is the one refusal left here -- but
+    # the lesson is the reason to keep it a named, per-op constant rather than an inline string if
+    # this class ever grows another one.
     WRITE_MSG = "chunk-mode writes go through the sync engine (Sync::Commit's two-phase " \
                 "commit), not through FileLayer".freeze
-
-    # Sync::SubtreeDelete, NOT Sync::Mutation.apply(op: "delete"): the latter tombstones only
-    # the node it is given, so on a directory it orphans the descendants — /v1/tree would serve
-    # children pointing at a deleted parent while changelog-following devices dropped the whole
-    # subtree (see Sync::SubtreeDelete's header). SubtreeDelete is the safe superset: on a
-    # childless file it collects exactly one node and does the identical single tombstone, which
-    # is why it is the right answer to give a caller who has not told us which kind they hold.
-    DELETE_MSG = "chunk-mode delete goes through the sync engine (Sync::SubtreeDelete.call, " \
-                 "which cascades the tombstone to the subtree), not through FileLayer".freeze
 
     def capabilities
       # scannable: false — chunk mode's tree comes from the sync engine's changelog, not from
@@ -29,9 +23,9 @@ module FileLayer
       #
       # port_writable: false — and this is NOT "chunk mode can't take uploads", which it does
       # all day. It says the port is the wrong door for BYTES: the UI must drive Sync::Commit's
-      # two-phase presigned flow, which is why write/delete below refuse. Read as "accepts
-      # uploads" it would hide the upload button in the product's main deployment. mkdir and move
-      # are METADATA verbs, not bytes, so this capability does not gate them -- both now go
+      # two-phase presigned flow, which is why write below refuses. Read as "accepts uploads" it
+      # would hide the upload button in the product's main deployment. mkdir, move and delete are
+      # METADATA verbs, not bytes, so this capability does not gate them -- all three now go
       # through the port on every backend regardless of what this flag says (CLAUDE.md 14a:
       # port_writable answers which upload flow the UI drives, not "does this op work").
       Capabilities.new(versioned: true, syncable: true, presignable: true, scannable: false,
@@ -184,14 +178,17 @@ module FileLayer
       end)
     end
 
-    # The port's write path is share/s3 only. Chunk-mode mutations are the sync engine's, and
-    # each has its own door (see the constants above). Implementing them here would mean a
-    # server-side chunk-and-commit path that duplicates Sync::Commit, has no caller, and
-    # reaches into the sync engine this port exists to stay out of (spec §10).
+    # The port's write path is share/s3 only. Chunk-mode WRITES are the sync engine's own --
+    # Sync::Commit's two-phase presigned flow -- and this is that door's honest refusal rather
+    # than an absent method: implementing write here would mean a server-side chunk-and-commit
+    # path that duplicates Sync::Commit, has no caller, and reaches into the sync engine this
+    # port exists to stay out of (spec §10). mkdir/move/delete below are METADATA verbs, not
+    # bytes, so none of that argument binds them -- they go through the port on every backend,
+    # chunk included (see each one's own comment for its history).
     #
-    # They exist, rather than being absent, so the answer is an honest error instead of a
-    # NoMethodError that reads as an oversight — which only holds if each error names the door
-    # that op actually uses. A confident wrong answer is worse than NoMethodError: NoMethodError
+    # It exists, rather than being absent, so the answer is an honest error instead of a
+    # NoMethodError that reads as an oversight — which only holds if the error names the door
+    # write actually uses. A confident wrong answer is worse than NoMethodError: NoMethodError
     # sends you to the code, a wrong class name sends you to the wrong file.
     #
     # The keyword names are the port's intended shape and are documentary: a reader sees exactly
@@ -200,10 +197,6 @@ module FileLayer
     # real answer.
     def write(_user, parent_node_id: nil, name: nil, io: nil)
       raise NotImplementedError, WRITE_MSG
-    end
-
-    def delete(_user, node_id: nil)
-      raise NotImplementedError, DELETE_MSG
     end
 
     # THE PORT IS THE DOOR, and it was a refusal until Stage 2. It changed because
@@ -274,6 +267,27 @@ module FileLayer
       file_info(node, node.current_version&.size)
     end
 
+    # Sync::SubtreeDelete, NOT Sync::Mutation.apply(op: "delete"): the latter tombstones only the
+    # node it is given, so on a directory it orphans the descendants -- /v1/tree would serve
+    # children pointing at a deleted parent while changelog-following devices dropped the whole
+    # subtree. SubtreeDelete is the safe superset: on a childless file it collects exactly one node
+    # and does the identical single tombstone, which is why it is the right answer to give a caller
+    # who has not told us which kind they hold.
+    #
+    # THIS IS WHY CHUNK ANSWERS dir_deletable TRUE while share and s3 answer false. Do not "fix"
+    # that asymmetry in either direction: the cascade is real here and impossible there.
+    #
+    # RETURNS nil, MATCHING Share#delete AND S3#delete -- neither port sibling hands anything back
+    # for this verb (both end `node.update!(...)` then a bare `nil`), so this is the port's real
+    # contract for delete, not a guess: FilesController#destroy never reads delete's return value
+    # on any backend.
+    def delete(user, node_id: nil)
+      node = live_node!(user, node_id)
+      seq = Sync::SubtreeDelete.call(user:, node:)
+      LibraryChannel.broadcast_change(user, seq)
+      nil
+    end
+
     # Normalize over the chunk-store backends.
     #   - memory store exposes read_blob (tests/dev)
     #   - local filesystem store exposes read
@@ -333,10 +347,10 @@ module FileLayer
     # DELIBERATELY MIRRORS FileLayer::S3#destination_vacant!, which has answered exactly this
     # across write/mkdir/move/undelete since Phase 3 and whose own comment cites §14a APPROVINGLY,
     # as the reason to share. That distinction is the one to hold on to, because §14a ALSO records
-    # a bug caused by sharing: what must not be shared is per-op REMEDIATION ADVICE -- the
-    # WRITE_MSG/DELETE_MSG constants above stay separate because "go and use this other door"
-    # names a DIFFERENT door per verb. "The destination is occupied" is not advice; it is one
-    # fact, identical whichever verb tripped over it.
+    # a bug caused by sharing: what must not be shared is per-op REMEDIATION ADVICE -- WRITE_MSG
+    # above stays its own constant (and would stay separate from any future refusal like it)
+    # because "go and use this other door" names a DIFFERENT door per verb. "The destination is
+    # occupied" is not advice; it is one fact, identical whichever verb tripped over it.
     #
     # SHARE INLINES THIS FOUR TIMES, IN FOUR WORDINGS, AND THAT IS SHARE'S CORRECT ANSWER, NOT A
     # LAPSE: it holds a row AND a real file on disk, so its move and undelete must special-case

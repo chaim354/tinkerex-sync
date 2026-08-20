@@ -333,7 +333,26 @@ module FileLayer
     # WRONG precedent for this verb. delete changes no field FileInfo exposes, so its nil costs
     # nothing; undelete can silently reparent a node to the root (see above), and
     # TrashController#restore's flash message reads info.name straight off this return value.
+    # TWO DIVERGENCES FROM share/s3 LIVE ON THIS METHOD, AND ONLY ONE OF THEM IS FIXABLE HERE.
+    #
+    # FIXED: an UNKNOWN node_id. Sync::Trash.restore opens with find_by!, which raises
+    # ActiveRecord::RecordNotFound -- a class from outside the port's own vocabulary, where
+    # Share#undelete and S3#undelete both answer FileLayer::NotFound. Harmless today only because
+    # TrashController happens to rescue both; a future caller rescuing FileLayer::* would miss it.
+    # The existence check below is what keeps the port's error taxonomy closed.
+    #
+    # NOT FIXED, AND STRUCTURAL RATHER THAN ARBITRARY: undeleting an ALREADY-LIVE node. Chunk
+    # treats it as an idempotent success (Sync::Trash.restore early-returns [node, nil]); share and
+    # s3 raise NotFound, because their lookup is scoped `deleted: true` and there are no bytes in
+    # .trash to move back for a node that is already live. So a double-click on Restore reads
+    # "Restored X." on chunk and "Couldn't restore that item." on share/s3. Unifying it would mean
+    # either making chunk raise about a file that IS restored, or making share/s3 claim a byte move
+    # they did not perform. Recorded, not papered over.
     def undelete(user, node_id: nil)
+      # NOT live_node!: this operates on a tombstone by definition, so a `.present` lookup would
+      # answer NotFound for exactly the rows this verb exists to act on.
+      user.nodes.exists?(node_id:) ||
+        raise(NotFound, "node #{node_id.inspect} does not exist")
       node, seq = Sync::Trash.restore(user:, node_id:, to_root: true)
       LibraryChannel.broadcast_change(user, seq) if seq
       file_info(node, node.current_version&.size)
@@ -411,10 +430,13 @@ module FileLayer
     # No `kind:` parameter, unlike S3's: that one exists for S3's file-key-vs-dir-marker namespace
     # split, and chunk has no such split for it to do anything with.
     #
-    # FOR THE UNDELETE COMING IN TASK 6 (§14a's fourth port verb): if a revive wants Share's
-    # wording ("occupied -- undelete must not clobber" reads better than "already exists" for a
-    # file coming BACK), inline it there rather than bending this message. A better error beats
-    # DRY, and that is exactly the call Share made differently from S3 for the same verb.
+    # UNDELETE (§14a's fourth port verb) DELIBERATELY DOES NOT CALL THIS. Sync::Trash.restore has
+    # no collision check anywhere in it, and adding one would change sync-engine semantics that the
+    # device API shares -- so chunk's revive can land two live nodes on one (parent, name) where
+    # share and s3 refuse. That divergence is recorded in #undelete's own comment rather than
+    # closed here. If it is ever closed, note that Share words it "occupied -- undelete must not
+    # clobber", which reads better for a file coming BACK than "already exists": inline that wording
+    # rather than bending this message. A better error beats DRY.
     def destination_vacant!(user, parent_node_id, name, except_node_id: nil)
       scope = user.nodes.present.where(parent_node_id:, name:)
       scope = scope.where.not(node_id: except_node_id) if except_node_id

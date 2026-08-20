@@ -29,6 +29,13 @@ module Sync
   # `env:` is a kwarg default rather than a captured constant or ivar — same shape as
   # `PostgresPoolerCheck.probe?`'s own `env:`, for the same reason: ENV is re-read on every call,
   # so a value injected by one test cannot leak into the next.
+  # THE NAME DESCRIBES WHAT THIS WILL MEAN, NOT WHAT IT MEASURES TODAY, and a final review was right
+  # to call that out. In this monorepo the Sync module is loaded unconditionally on every backend --
+  # nothing about the engine's PRESENCE in the process varies. What varies is whether this deployment
+  # USES it, which is what LIBRARY_BACKEND actually answers. The name is deliberate anyway: it is the
+  # question 3b's caller wants to ask, and 3b replaces this body with a real engine object without
+  # touching a single call site. Until then, read the body, not the name, before adding a caller --
+  # there is exactly one today (PostgresPoolerCheck.probe?).
   def self.engine_present?(env: ENV)
     env.fetch("LIBRARY_BACKEND", "chunk") == "chunk"
   end

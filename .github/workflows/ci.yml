@@ -1,0 +1,36 @@
+# The engine's own gate. In the tinkerex monorepo this was `bin/ci engine`, one of eight gates,
+# running `cd engines/tinkerex-sync && bundle exec rake test`. The 2026-08-20 extraction deleted
+# that gate there -- its own comment said to delete rather than adapt it -- so this file is where
+# that coverage lives now.
+#
+# SELF-HOSTED RUNNERS ONLY, NEVER `*-latest`. GitHub bills only hosted runners (macos 10x,
+# windows 2x); self-hosted are free. This is the monorepo's standing rule and it travels with the
+# code.
+#
+# NOTE, AND IT IS A REAL GAP RATHER THAN A FORMALITY: this repository has NO registered runner as
+# of extraction, so this workflow is queued-and-cancelled rather than passing. A job matching no
+# online runner does not fail -- it sits for 24h at 0 elapsed and is auto-cancelled, which reads as
+# UNSTABLE rather than red. Register a `[self-hosted, macos]` runner against this repo to turn it
+# on. Until then the suite is `bundle exec rake test` by hand, and nothing runs it automatically.
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: [ self-hosted, macos ]
+    steps:
+      - uses: actions/checkout@v7
+
+      # No ruby/setup-ruby: it assumes a hosted /Users/runner layout the self-hosted box lacks.
+      # The runner's PATH carries a mise ruby matching .ruby-version.
+      - name: Install gems
+        run: bundle install --quiet
+
+      - name: The engine's suite, on its own dummy host
+        env:
+          RAILS_ENV: test
+        run: bundle exec rake test

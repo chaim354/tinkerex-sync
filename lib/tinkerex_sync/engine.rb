@@ -40,5 +40,68 @@ module Sync
     # standalone engine is goal one of the arc. Isolating trades eight generic squatted names for
     # one.
     isolate_namespace Sync
+
+    # `lib/` IS NOT AN AUTOLOAD ROOT FOR A Rails::Engine BY DEFAULT -- ONLY `app/*` IS, FOR FREE.
+    # The host gets its `lib/sync/postgres_pooler_check.rb` autoloaded via `config.autoload_lib`
+    # in config/application.rb, but that method is defined on `Rails::Application::Configuration`
+    # only (railties' lib/rails/application/configuration.rb) -- there is no `Rails::Engine`
+    # equivalent to call. Verified `uninitialized constant Sync::PostgresPoolerCheck` the moment
+    # lib/sync/postgres_pooler_check.rb moved here unchanged; this initializer is the fix,
+    # replicating `autoload_lib`'s own body (same two array pushes, same `ignore` call) rather
+    # than inventing a different shape for the same problem.
+    #
+    # There IS one shared Zeitwerk loader for the whole boot, `Rails.autoloaders.main` -- engines
+    # do not get a private loader of their own merely by being isolated (grepped railties itself:
+    # `Zeitwerk::Loader.new` appears exactly once, in rails/autoloaders.rb; `isolate_namespace` is
+    # naming/config conventions only, never a second loader). That is also WHY the models and
+    # services moved earlier in this same commit sequence autoloaded correctly with no equivalent
+    # step: `app/*` roots are pushed onto that one shared loader automatically, by Rails::Engine's
+    # own `:set_autoload_paths` initializer, for every engine.
+    #
+    # THE TWO ARRAY PUSHES RUN DIRECTLY IN THE CLASS BODY, NOT INSIDE `initializer do ... end` --
+    # TRIED FIRST AND FAILED LOUDLY: Rails' own `:set_autoload_paths` initializer reads and
+    # FREEZES `config.autoload_paths`/`config.eager_load_paths` early in the boot sequence, well
+    # before a plainly-declared custom `initializer` block (which sorts, by default, into the
+    # general run AFTER that point) ever gets to run -- `can't modify frozen Array: []` the moment
+    # this tried to push into one from inside such a block. `config.autoload_lib` itself
+    # (railties' application/configuration.rb) is called directly in `Rails::Application`'s own
+    # class body for the identical reason; this matches that timing rather than rediscovering it.
+    lib = root.join("lib")
+    config.autoload_paths << lib.to_s
+    config.eager_load_paths << lib.to_s
+
+    # TWO SUBDIRECTORIES ARE IGNORED, FOR TWO DIFFERENT REASONS -- do not collapse this to one
+    # generic "ignore lib/tasks like the host does" comment, because only the first is that.
+    #
+    #   - `lib/tasks/` matches the host's own `ignore: %w[assets tasks]` (this engine ships no
+    #     `lib/assets`, so only `tasks` is real here). A `.rake` file has no `.rb` extension so
+    #     Zeitwerk's own file scan already skips it, but an unignored directory still gets walked
+    #     as a namespace on every eager load for zero benefit.
+    #   - `lib/tinkerex_sync/` MUST be ignored, and skipping it is not optional the way `tasks` is:
+    #     this is the GEM'S OWN bootstrap directory (tinkerex_sync.rb, engine.rb -- this very file
+    #     -- sync_module.rb, version.rb), already loaded by plain `require`, never meant to be
+    #     autoloaded at all. Adding `lib` to the autoload roots above puts it in Zeitwerk's path
+    #     for the first time, and its filenames do not match what Zeitwerk expects from them --
+    #     `tinkerex_sync/engine.rb` is expected to define `TinkerexSync::Engine`, and it defines
+    #     `Sync::Engine` (that mismatch is this whole file's `module Sync` reason to exist), and
+    #     `tinkerex_sync/version.rb` defines the constant `TinkerexSync::VERSION`, not the class
+    #     `TinkerexSync::Version` its path implies. `bin/rails zeitwerk:check` FAILED with
+    #     `uninitialized constant TinkerexSync::Engine` the moment `lib` was added without this --
+    #     found by running the check, not reasoned in advance.
+    #
+    # BOTH IGNORES GO IN AN INITIALIZER, NOT THE CLASS BODY -- direct-in-body was tried first and
+    # failed: `Rails.autoloaders` delegates to `Rails.application.autoloaders` (rails.rb), and
+    # `Rails.application` is nil at the point this file is `require`d -- that happens from
+    # Bundler.require, inside config/application.rb, BEFORE the `Tinkerex::Application <
+    # Rails::Application` class below it is even defined. Only an Application subclass's OWN
+    # `inherited` hook sets `Rails.application`, and an Engine triggers no such hook, so this
+    # engine is *structurally* loaded before any application exists to ask Rails.autoloaders
+    # about. `before: :set_autoload_paths` places this call inside Rails::Application#initialize!
+    # (where Rails.application is unconditionally already set, by definition of what is calling
+    # it) and strictly before the paths above get frozen -- the narrow window that satisfies both
+    # this and the array-freeze failure documented above at once.
+    initializer "tinkerex_sync.ignore_lib_subdirs", before: :set_autoload_paths do
+      Rails.autoloaders.main.ignore(lib.join("tasks"), lib.join("tinkerex_sync"))
+    end
   end
 end

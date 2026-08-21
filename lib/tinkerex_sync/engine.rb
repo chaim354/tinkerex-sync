@@ -41,11 +41,17 @@ module Sync
     # one.
     isolate_namespace Sync
 
-    # THE ROUTE DRAWER IS PLAIN-REQUIRED, NOT AUTO-DRAWN. An engine's own config/routes.rb is
-    # normally evaluated by Rails only when the engine is MOUNTED, and this engine deliberately is
-    # not mounted (see that file's header: its routes interleave with the host's inside one
-    # `namespace :v1`, which a mount cannot express). So the host and the dummy call
-    # Sync.draw_v1_routes themselves, and the definition has to exist before either does.
+    # THE ROUTE DRAWER IS PLAIN-REQUIRED, AND IT LIVES AT lib/tinkerex_sync/v1_routes.rb RATHER THAN
+    # config/routes.rb. An earlier version of this comment said an engine's config/routes.rb is
+    # "evaluated by Rails only when the engine is MOUNTED" -- that is exactly the misunderstanding
+    # that cost an hour: Rails::Engine adds its own `routes` initializer which evaluates that file
+    # whether or not anything mounts the engine, so the drawer sitting there was loaded TWICE and
+    # Ruby said so (`already initialized constant Sync::V1_ROUTES`). Moving it out of the reserved
+    # path is the fix; the require below is then the only thing that loads it.
+    #
+    # This engine is deliberately not mounted -- see v1_routes.rb's header: its routes interleave
+    # with the host's inside one `namespace :v1`, which a mount cannot express. So the host and the
+    # dummy call Sync.draw_v1_routes themselves, and the definition must exist before either does.
     #
     # `require`, not autoload: routes are drawn during initialization, before Zeitwerk is ready --
     # the same reason sync_module.rb is required rather than autoloaded.

@@ -39,32 +39,34 @@ module Sync
     # configured (`STORAGE_BACKEND` defaults to `s3` outside test, no CHUNK_* set) and 500 with a
     # bare `KeyError: CHUNK_BUCKET`, the exact hole §14a's capability-gate design exists to close.
     #
-    # RESOLVED BY MATCHING AN ALREADY-SANCTIONED PRECEDENT, NOT BY INVENTING A NEW SEAM. This
-    # engine's controllers `include ::LibraryCapabilities` directly, below -- an explicit,
-    # qualified reference to one host file, the identical shape
-    # app/controllers/concerns/v1/stash_request_base_url.rb already has with CommitsController and
-    # ChunksController (both moving in this same task), which CLAUDE.md's SYNC_SEAM_EXCEPTIONS
-    # comment calls "permanent... short of the whole engine actually extracting in Phase B, at
-    # which point the question of what counts as 'the maker layer' changes shape entirely" --
-    # i.e. Phase A's own authors already anticipated this exact question and left it for Task 7
-    # to answer, not to pre-solve. An earlier draft of this file instead built a host-configurable
-    # `capability_check` seam (a mattr_accessor + an `ActiveSupport.on_load(:sync_v1_base_controller)`
-    # hook, so a bare mount would default to "everything allowed" and this host would override
-    # it at boot) — correct in outline, but a NEW abstraction solving a problem this codebase had
-    # already decided, for `stash_request_base_url.rb`, was tolerable to leave as a direct
-    # reference for now. Building a second, different-shaped answer beside an existing, argued one
-    # is the inconsistency worth avoiding here, not the coupling itself.
+    # RESOLVED FOR REAL AT STAGE 3b TASK 9 BY Sync::V1::CapabilityGate
+    # (app/controllers/concerns/sync/v1/capability_gate.rb), NOT BY THE DIRECT REFERENCE THIS
+    # COMMENT USED TO DEFEND. This class's own earlier draft considered exactly this shape -- "a
+    # host-configurable capability_check seam (a mattr_accessor + an
+    # ActiveSupport.on_load(:sync_v1_base_controller) hook)... correct in outline" -- and set it
+    # aside as a new abstraction not worth building before Task 9 had a reason to. Task 9 is that
+    # reason. CapabilityGate is the engine's own `require_capability!`, matching
+    # LibraryCapabilities' signature and JSON shape exactly, but asking two host-configurable
+    # predicates (Sync.capability_available?, Sync.capability_unavailable_message --
+    # lib/tinkerex_sync/sync_module.rb) instead of FileLayer.current.capabilities directly. Both
+    # default to "available, always" -- correct for a bare mount, which genuinely has every
+    # capability this gate is ever asked about, by construction (see that file's own comment, not
+    # a placeholder pending configuration). The host wires both, once, in
+    # config/initializers/sync_capabilities.rb, to FileLayer.current.capabilities and
+    # LibraryCapabilities::CAPABILITY_ABSENT -- so this app's 501 bodies stay byte-identical to
+    # what direct inclusion produced; test/integration/v1/capability_gating_test.rb is unchanged
+    # and still green.
     #
-    # THE LOOSE END, NAMED RATHER THAN HIDDEN: this means `Sync::V1::BaseController` -- and by
-    # inheritance, all twelve moved controllers -- cannot be loaded today without the host's
-    # `LibraryCapabilities` (app/controllers/concerns/library_capabilities.rb) present. A genuinely
-    # standalone mount (Task 6's test/dummy host, Task 9's engine-only suite) will need to answer
-    # this for real -- likely by having the host inject its gate via config rather than this engine
-    # naming the host's file directly. That is real, not-yet-done work, and it is Task 9's to do,
-    # not retrofitted here under this task's own steam.
+    # THE LOOSE END NAMED ABOVE IS NOW CLOSED FOR THIS CLASS: nothing in this file, or in
+    # anything that inherits ONLY from it, names a host constant any more. NOT A CLAIM THAT ALL
+    # TWELVE CONTROLLERS MOVED IN TASK 7 LOAD STANDALONE TODAY -- two of them, CommitsController
+    # and ChunksController, separately `include ::V1::StashRequestBaseUrl`
+    # (app/controllers/concerns/v1/stash_request_base_url.rb), a THIRD host dependency Task 9
+    # found but did not close (CLAUDE.md §14j). That is a fact about those two files' own
+    # `include` lines, not about this one.
     class BaseController < ActionController::API
       include Sync::V1::Authentication
-      include ::LibraryCapabilities
+      include Sync::V1::CapabilityGate
 
       rescue_from ActiveRecord::RecordNotFound, with: :not_found
       rescue_from ActionController::ParameterMissing, with: :bad_request

@@ -10,10 +10,14 @@ module V1
   #   - benign-but-invalid input renders 4xx, never 500
   class NodeGuardsTest < ActionDispatch::IntegrationTest
     # Guards on the sync engine's own mutation surface, which is chunk-mode only (spec §3.3) as of
-    # Phase 4 Task 7's gate. Pinned, not rewritten: every assertion below is still exactly right
-    # about the deployment it was always describing.
+    # Phase 4 Task 7's gate. Every assertion below is still exactly right about the deployment it
+    # was always describing.
+    #
+    # `pin_file_layer_backend("chunk")` DROPPED WHEN THIS TEST MOVED HERE -- see
+    # tenant_isolation_test.rb's setup for the full argument (a bare mount's
+    # Sync.capability_check stays at its "available, always" default, so there is nothing ambient
+    # to pin against).
     setup do
-      pin_file_layer_backend("chunk")
       Sync::Storage::ChunkStore.reset!
     end
 

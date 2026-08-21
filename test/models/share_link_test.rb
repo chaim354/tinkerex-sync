@@ -2,7 +2,10 @@ require "test_helper"
 
 class ShareLinkTest < ActiveSupport::TestCase
   setup do
-    @user = User.create!(email: "owner@example.com", confirmed_at: Time.current, omniauth_signup: true)
+    # No confirmed_at:/omniauth_signup: -- Devise-only columns/attr this dummy's User does not
+    # carry (test/dummy/app/models/user.rb), and Sync::ShareLink.live? (the whole subject here)
+    # never asks a user whether it is confirmed.
+    @user = User.create!(email: "owner@example.com")
   end
 
   test "live? is true with no expiry and no revocation" do

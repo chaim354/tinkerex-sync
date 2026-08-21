@@ -2,7 +2,8 @@ require "test_helper"
 
 class Sync::Sharing::LinksTest < ActiveSupport::TestCase
   setup do
-    @owner = User.create!(email: "o@example.com", confirmed_at: Time.current, omniauth_signup: true)
+    # No confirmed_at:/omniauth_signup: -- see test/models/share_link_test.rb's setup for why.
+    @owner = User.create!(email: "o@example.com")
     # A file node with one immutable version + a 2-chunk manifest, owned by @owner.
     @node_id = SecureRandom.uuid
     @version_id = SecureRandom.uuid

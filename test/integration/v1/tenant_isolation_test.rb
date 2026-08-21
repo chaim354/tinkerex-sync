@@ -6,11 +6,21 @@ module V1
   # another user's tree, changelog, or nodes.
   class TenantIsolationTest < ActionDispatch::IntegrationTest
     # Isolation AT THE SYNC SURFACE (tree, changelog, nodes), which Phase 4 Task 7 gates to chunk
-    # mode. Pinning does not weaken what this proves: on share/s3 those endpoints answer 501 to
-    # their owner and to a stranger alike, so the question this suite asks does not arise there.
-    # It is the deployment WITH the surface that has to keep the tenants apart.
+    # mode. On the HOST that gate is real: Sync::V1::CapabilityGate asks
+    # Sync.capability_available?, which config/initializers/sync_capabilities.rb wires to
+    # FileLayer.current.capabilities -- so a v1 sync test there had to `pin_file_layer_backend
+    # ("chunk")` or risk 501ing under whatever LIBRARY_BACKEND happened to be ambient (bin/ci's
+    # share/s3 legs run the WHOLE suite under a different one).
+    #
+    # `pin_file_layer_backend` DROPPED WHEN THIS TEST MOVED HERE -- it pinned
+    # ENV["LIBRARY_BACKEND"] and called ::FileLayer.reset!, both host-only concepts (FileLayer is
+    # HOST_CONSTANTS-guarded; this dummy has no equivalent). Nothing is weakened by dropping it:
+    # in a bare mount Sync.capability_check stays at its DEFAULT_CAPABILITY_CHECK ("available,
+    # always" -- lib/tinkerex_sync/sync_module.rb), because no host initializer overrides it, so
+    # every capability these endpoints ask about is unconditionally true and there is nothing to
+    # pin it AGAINST. This is the general shape for every "pin_file_layer_backend dropped" comment
+    # in this suite; the other moved v1 integration tests point back here rather than repeating it.
     setup do
-      pin_file_layer_backend("chunk")
       Sync::Storage::ChunkStore.reset!
     end
 

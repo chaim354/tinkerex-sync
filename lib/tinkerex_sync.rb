@@ -19,4 +19,21 @@ module TinkerexSync
   #   Device -- the credential. Its token is the ONLY thing the whole v1 API accepts, maker
   #             endpoints included, which is why it stays host-side rather than moving here.
   HOST_MODELS = %w[User Node Device].freeze
+
+  # AND THREE FRAMEWORK BASE CLASSES THE MODEL LIST DOES NOT COVER, found by booting the dummy app
+  # rather than by reading: every `Sync::` model, job and channel names one explicitly
+  # (`< ::ApplicationRecord`, `< ::ApplicationJob`, `< ::ApplicationCable::Channel`), because Phase A
+  # qualified them all so `isolate_namespace` could not misresolve them. A host without one gets a
+  # NameError at boot, far from the cause.
+  #
+  # SEPARATE FROM HOST_MODELS ON PURPOSE: those three are the DOMAIN contract -- a tenant, a catalog
+  # row, a credential -- and a host implements them. These are Rails boilerplate any Rails app
+  # already has, which is why they are easy to forget when writing down what the engine needs.
+  HOST_BASE_CLASSES = %w[ApplicationRecord ApplicationJob ApplicationCable::Channel].freeze
+
+  # ONE MORE THING A HOST MUST SUPPLY, AND IT IS NOT A CONSTANT: `Sync::RetentionJob` calls
+  # `limits_concurrency`, solid_queue's ActiveJob extension. Core Rails does not have it. The gemspec
+  # deliberately does not depend on solid_queue (the host picks its own queue adapter), so this is a
+  # documented host obligation. See the gemspec for the full argument.
+  HOST_JOB_EXTENSIONS = %w[limits_concurrency].freeze
 end

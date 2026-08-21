@@ -77,11 +77,17 @@ module Sync
       # (V1::CommitsController, V1::ChunksController) and their comments to save three lines of
       # duplication here. Judged not clean enough to force; left separate on purpose.
       def stash_request_base_url
-        # `::FileLayer`, EXPLICITLY QUALIFIED -- a deliberate, host-only reference (see
-        # Sync::V1::BaseController's header for the full argument), not an association name
-        # `isolate_namespace` would resolve differently; there is nothing implicit to rely on
-        # here as there was for `ApplicationRecord`/`User`, so this says so at the call site too.
-        return unless ::FileLayer.current.capabilities.versioned?
+        # STAGE 3b TASK 9: was `return unless ::FileLayer.current.capabilities.versioned?`, a
+        # deliberate, explicitly-qualified host-only reference (see Sync::V1::BaseController's
+        # header for the fuller argument this closes). Now the same host-configurable predicate
+        # Sync::V1::CapabilityGate uses -- defaults to "available, always" for a bare mount
+        # (lib/tinkerex_sync/sync_module.rb), wired to FileLayer.current.capabilities.versioned?
+        # by config/initializers/sync_capabilities.rb on this host, so the answer here is
+        # byte-identical to before. Still not `require_capability!`: this is a soft `return`, not
+        # a 501 -- ShareController stays deliberately ungated (see this file's own header), and
+        # the capability question here is only ever "should I bother stashing a URL for the
+        # `local` chunk backend," never "should this request be refused."
+        return unless Sync.capability_available?(:versioned)
         if Sync::Storage::ChunkStore.current.is_a?(Sync::Storage::LocalChunkStore)
           Sync::Storage::LocalChunkStore::PUBLIC_URL_OVERRIDE.value = request.base_url
         end

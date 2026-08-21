@@ -15,7 +15,7 @@ module Sync
       # not move it. See Sync::V1::BaseController's header for why that reference is tolerated
       # rather than solved here: CLAUDE.md's SYNC_SEAM_EXCEPTIONS comment already called this file
       # "permanent... short of the whole engine actually extracting in Phase B", which is now.
-      include ::V1::StashRequestBaseUrl
+      include Sync::V1::StashRequestBaseUrl
       rescue_from Sync::Commit::InvalidManifest, with: :unprocessable
       # Changing an existing node's kind, or two devices racing to insert the same node_id, is a
       # conflict (409) — a clean, retriable result — not a 500.

@@ -64,6 +64,70 @@ module Sync
     env.fetch("LIBRARY_BACKEND", "chunk") == "chunk"
   end
 
+  # STAGE 3b TASK 9 — THE HOST-CONFIGURABLE HALF OF THE ENGINE'S OWN CAPABILITY GATE. CLAUDE.md
+  # §14j named two host dependencies left inside the engine after Phase B: `Sync::V1::BaseController`
+  # `include ::LibraryCapabilities` and `Sync::V1::ShareController` reading
+  # `::FileLayer.current.capabilities.versioned?` directly — both host constants, neither
+  # autoloadable in a bare mount with no host application present. `Sync::V1::CapabilityGate`
+  # (app/controllers/concerns/sync/v1/capability_gate.rb) is the engine's own `require_capability!`,
+  # replacing that direct `include`; it and `Sync::V1::ShareController` both ask the two questions
+  # below instead of naming `FileLayer` or `LibraryCapabilities` themselves.
+  #
+  # THE STANDALONE DEFAULT IS "EVERY CAPABILITY IS AVAILABLE," UNCONDITIONALLY — NOT A
+  # PLACEHOLDER PENDING CONFIGURATION, THE CORRECT PERMANENT ANSWER FOR A BARE SYNC SERVER.
+  # CLAUDE.md §2: this engine IS the sync engine. It has a changelog, chunks, devices and
+  # versions by construction, so `syncable`/`versioned`/anything else this gate is ever asked
+  # about is true for as long as the process exists at all. The capability QUESTION exists only
+  # because a HOST can configure a share- or s3-backed library that has none of that (§14a) — a
+  # fact about the host's FileLayer port, not about the engine. So the permissive default is the
+  # engine correctly describing itself with nothing else attached, never "fail open until someone
+  # gets around to configuring it."
+  #
+  # TWO CONFIGURABLES, NOT ONE — matching `require_capability!`'s two jobs: whether the request
+  # may proceed, and what to say if it may not. The host wires both together, once, in
+  # `config/initializers/sync_capabilities.rb`, to `FileLayer.current.capabilities` and
+  # `LibraryCapabilities::CAPABILITY_ABSENT` — so its 501 bodies stay byte-identical to what direct
+  # inclusion produced. Collapsing them into one combined callable would work for THIS host, which
+  # always has both answers ready together, but would force every future host to rebuild the
+  # availability logic just to reword a sentence.
+  #
+  # NAMED CONSTANTS FOR THE DEFAULTS, NOT ONLY `mattr_accessor`'s OWN `default:` KWARG — so a test
+  # (or a future caller) can restore the exact standalone answer after temporarily overriding it,
+  # the same "you broke it, you put it back" contract `Sync::Hooks.reset!` states for its own
+  # subscriber list. Once a host initializer runs `Sync.capability_check = ...`, the ORIGINAL
+  # default the accessor was built with is no longer reachable through the accessor itself — Ruby
+  # does not retain it once the class variable is reassigned — so recovering "what does a bare
+  # mount answer" would otherwise mean re-deriving the lambda from scratch, which drifts the
+  # moment one copy changes and not the other. A named constant sidesteps that.
+  #
+  # `instance_accessor: false` ON BOTH — nothing includes the bare `Sync` module as a mixin, so
+  # the instance-level reader/writer `mattr_accessor` would otherwise define are surface with no
+  # caller, ever.
+  #
+  # THE HOST INITIALIZER MUST ASSIGN THESE FROM INSIDE `Rails.application.config.after_initialize`
+  # (same as `config/initializers/sync_hooks.rb` and `postgres_pooler_check.rb`, for the identical
+  # reason stated in both: `Sync` and the host constants these lambdas eventually touch are not
+  # reliably autoloadable while initializers are still running). But the sharper reason belongs to
+  # the two methods' CALLERS, not to this file — see `Sync::V1::CapabilityGate`'s own header for why
+  # `capability_available?`/`capability_unavailable_message` must be invoked from inside a
+  # `before_action` block, at request time, and never at `require_capability!`'s own call time.
+  DEFAULT_CAPABILITY_CHECK = ->(_capability) { true }
+  DEFAULT_CAPABILITY_MESSAGE = ->(capability) {
+    "this deployment does not support the #{capability} capability."
+  }
+
+  mattr_accessor :capability_check, instance_accessor: false, default: DEFAULT_CAPABILITY_CHECK
+  mattr_accessor :capability_message, instance_accessor: false, default: DEFAULT_CAPABILITY_MESSAGE
+
+  # Is `capability` available RIGHT NOW, in THIS deployment? The only question
+  # `Sync::V1::CapabilityGate#require_capability!` asks before rendering 501.
+  def self.capability_available?(capability) = capability_check.call(capability)
+
+  # Why not, in the operator's terms. Meaningful only once #capability_available? has already
+  # answered false — a caller must not treat a non-nil message here as itself meaning
+  # "unavailable."
+  def self.capability_unavailable_message(capability) = capability_message.call(capability)
+
   # Shared bulk-loading helper for the read serializers (G11 scale validation).
   #
   # Manifests are stored as `manifest_chunks` rows keyed by the string `manifest_id`

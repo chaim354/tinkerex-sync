@@ -8,7 +8,9 @@ module V1
       # A share link is VERSION-scoped by construction (Sharing::Links.create_for_version!), so
       # minting one is a chunk-mode act and Phase 4 Task 7 gates the owner side on `versioned`.
       # Note "share link" here has nothing to do with FileLayer::Share -- see the controller.
-      pin_file_layer_backend("chunk")
+      #
+      # `pin_file_layer_backend("chunk")` DROPPED WHEN THIS TEST MOVED HERE -- see
+      # tenant_isolation_test.rb's setup for the full argument.
       Sync::Storage::ChunkStore.reset!
       @token = bootstrap_account(email: "owner@example.com")["device_token"]
       @owner = User.find_by!(email: "owner@example.com")

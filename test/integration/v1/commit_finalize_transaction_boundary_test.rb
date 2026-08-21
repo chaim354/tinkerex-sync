@@ -34,8 +34,9 @@ module V1
   class CommitFinalizeTransactionBoundaryTest < ActionDispatch::IntegrationTest
     self.use_transactional_tests = false
 
+    # `pin_file_layer_backend("chunk")` DROPPED WHEN THIS TEST MOVED HERE -- see
+    # tenant_isolation_test.rb's setup for the full argument.
     setup do
-      pin_file_layer_backend("chunk")
       Sync::Storage::ChunkStore.reset!
       @email = "txn-boundary-#{SecureRandom.hex(4)}@example.com"
     end

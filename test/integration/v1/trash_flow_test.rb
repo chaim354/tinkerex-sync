@@ -8,9 +8,11 @@ module V1
     # THE CHUNK TRASH, which is the only thing this controller ever was: a tombstone whose versions
     # are kept, restored by re-pointing at one. A share/s3 library's trash is a different mechanism
     # (2b: bytes to `.trash/<node_id>/`, recovered via FileLayer#undelete) and is not exposed here,
-    # so Phase 4 Task 7 gates this surface on `syncable` and this suite says which trash it means.
+    # so Phase 4 Task 7 gates this surface on `syncable` -- this suite says which trash it means.
+    #
+    # `pin_file_layer_backend("chunk")` DROPPED WHEN THIS TEST MOVED HERE -- see
+    # tenant_isolation_test.rb's setup for the full argument.
     setup do
-      pin_file_layer_backend("chunk")
       Sync::Storage::ChunkStore.reset!
     end
 
@@ -139,11 +141,19 @@ module V1
 
     # A TOMBSTONE SHAPED LIKE A REAL ONE — `current_version_id` IS ALWAYS SET, which is the
     # load-bearing part (see the trap in the test below). `size` lives on the VERSION, not on the
-    # node, because that is where the serializer reads it from. `with_version: false` points the
-    # tombstone at a version id this user does not hold, which is the cross-tenant case.
+    # node, because that is where the serializer reads it from (TrashController#index:
+    # `sizes[n.current_version_id]`, never `n.size`). `with_version: false` points the tombstone
+    # at a version id this user does not hold, which is the cross-tenant case.
+    #
+    # `nodes.create!` DOES NOT PASS `size:` HERE, unlike the host's copy of this helper -- this
+    # dummy's Node has no `size` column at all (test/dummy/app/models/node.rb's own header:
+    # grepped every engine reference to `node.size` before writing that schema; there are none).
+    # Confirmed inert before dropping it, not assumed: the comment above already states the
+    # serializer never reads it, and this dummy's minimal nodes table is the enforcement of that
+    # claim rather than a second copy of it.
     def tombstone!(user, id, version_id: "v-#{id}", version_size: 7, with_version: true)
       user.versions.create!(version_id:, node_id: id, manifest_id: "m-#{id}", size: version_size) if with_version
-      user.nodes.create!(node_id: id, name: "#{id}.stl", kind: "file", size: version_size,
+      user.nodes.create!(node_id: id, name: "#{id}.stl", kind: "file",
                          mtime: 1_700_000_000_000_000_000, deleted: true,
                          current_version_id: version_id)
     end
@@ -200,8 +210,8 @@ module V1
       token = register(email: "trash-scope@example.com")
       user = User.find_by(email: "trash-scope@example.com")
       stranger = User.find_by(email: "trash-scope-other@example.com") ||
-                 User.create!(email: "trash-scope-other@example.com", confirmed_at: Time.current,
-                              omniauth_signup: true)
+                 # No confirmed_at:/omniauth_signup: -- see test/models/share_link_test.rb's setup.
+                 User.create!(email: "trash-scope-other@example.com")
 
       tombstone!(user, "mine", version_id: "shared-vid", version_size: 7)
       stranger.versions.create!(version_id: "shared-vid", node_id: "theirs", manifest_id: "m-x",

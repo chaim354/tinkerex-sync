@@ -1,64 +1,21 @@
-# A GENUINE FINDING OF THIS TASK, RECORDED HERE RATHER THAN JUST IN THE TASK REPORT: the engine
-# ships NO config/routes.rb of its own. Stage 3b Phase B Task 7 moved every Sync::V1::* controller
-# into engines/tinkerex-sync/, but routing stayed entirely in the HOST's config/routes.rb, which
-# interleaves the sync routes with two host-only routes (`devices#login`, `resources :devices`)
-# and a whole `namespace :maker do ... end` block, all inside ONE `namespace :v1 do` (see that
-# file's own extensive comment on why every `to:`/`controller:` needs a leading `/`). So this
-# dummy app cannot simply `mount Sync::Engine` and inherit routing -- there is nothing to mount;
-# routes.rb is host business, and until now no host but the real one had ever drawn them.
+# THE DUMMY'S ROUTES, WHICH ARE NOW THE ENGINE'S OWN.
 #
-# What follows is the SYNC SUBSET of the host's namespace :v1 block, verified line-for-line
-# against config/routes.rb (every path, verb and controller target copied, not re-derived) minus
-# exactly the two host-only device routes and the maker namespace. It is NOT auto-generated and
-# NOT shared with the host file -- the two can drift, which is the gap itself, not a decoration on
-# it. If tinkerex-sync ever becomes its own repository, this is where a real
-# `engines/tinkerex-sync/config/routes.rb` (drawn via `Sync::Engine.routes.draw do ... end` and
-# `mount`ed by the host) belongs; today it is the dummy's own stand-in for that missing file.
+# This file used to open with a long note explaining that the engine shipped no config/routes.rb,
+# that routing had stayed entirely in the host when Phase B moved the controllers, and that what
+# followed was a hand-copied subset which "can drift, which is the gap itself, not a decoration on
+# it." That was an honest description of a real gap -- and the gap is now closed, so the note is
+# gone rather than left to mislead.
+#
+# The engine has its own config/routes.rb. Both this app and the host call Sync.draw_v1_routes,
+# and engine_routes_test.rb asserts the two draw the same paths, so neither can quietly fall
+# behind the other. See the engine's routes file for why it is a drawer rather than a mount.
 Rails.application.routes.draw do
   namespace :v1 do
-    # content commits (two-phase)
-    post "commit", to: "/sync/v1/commits#create"
-    post "commit/:commit_id/finalize", to: "/sync/v1/commits#finalize"
-
-    # pull
-    get "changes", to: "/sync/v1/changes#index"
-    get "tree", to: "/sync/v1/tree#index"
-
-    # search (name/path; scoped to the device's user)
-    get "search", to: "/sync/v1/search#index"
-
-    # metadata ops + history
-    post "nodes", to: "/sync/v1/nodes#mkdir"
-    post "nodes/symlink", to: "/sync/v1/nodes#symlink"
-    delete "nodes/:node_id", to: "/sync/v1/nodes#destroy"
-    post "nodes/:node_id/move", to: "/sync/v1/nodes#move"
-    get "nodes/:node_id/versions", to: "/sync/v1/nodes#versions"
-    post "nodes/:node_id/restore", to: "/sync/v1/nodes#restore"
-    post "nodes/:node_id/resolve_conflict", to: "/sync/v1/nodes#resolve_conflict"
-
-    # conflicts (offline-edit divergence)
-    get "conflicts", to: "/sync/v1/conflicts#index"
-
-    # trash / undelete (the CHUNK trash -- Sync::Trash; see TrashController's own comment)
-    get "trash", to: "/sync/v1/trash#index"
-    post "trash/:node_id/restore", to: "/sync/v1/trash#restore"
-
-    # best-effort advisory edit locks
-    post "nodes/:node_id/lock", to: "/sync/v1/nodes#lock"
-    post "nodes/:node_id/unlock", to: "/sync/v1/nodes#unlock"
-    get "locks", to: "/sync/v1/locks#index"
-
-    # hydration
-    post "chunks/download", to: "/sync/v1/chunks#download"
-
-    # read-only share links (owner side, authenticated) + anonymous redeem
-    resources :share_links, only: %i[create destroy], controller: "/sync/v1/share_links"
-    get  "share/:token",          to: "/sync/v1/share#show"
-    post "share/:token/download", to: "/sync/v1/share#download"
-
-    # the `local` chunk backend's own presigned-style blob tier (HMAC-authorized, no bearer token)
-    put "chunks/blob/:user_id/:hash", to: "/sync/v1/chunks/blob#upload", constraints: { hash: /[0-9a-f]+/ }
-    get "chunks/blob/:user_id/:hash", to: "/sync/v1/chunks/blob#download", constraints: { hash: /[0-9a-f]+/ }
+    # THE SAME DEFINITION THE HOST DRAWS. This block used to be a hand-copied subset of the host's
+    # 26 sync routes -- the drift risk that made fixing the routing gap worth doing at all. If the
+    # engine adds a route, this app gets it without anyone remembering to copy it, and
+    # engine_routes_test.rb asserts the two agree.
+    Sync.draw_v1_routes(self)
   end
 
   # DEV/TEST-ONLY blob endpoint backing Sync::Storage::MemoryChunkStore's presigned URLs -- see

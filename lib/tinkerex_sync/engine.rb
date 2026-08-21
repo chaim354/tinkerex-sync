@@ -41,6 +41,16 @@ module Sync
     # one.
     isolate_namespace Sync
 
+    # THE ROUTE DRAWER IS PLAIN-REQUIRED, NOT AUTO-DRAWN. An engine's own config/routes.rb is
+    # normally evaluated by Rails only when the engine is MOUNTED, and this engine deliberately is
+    # not mounted (see that file's header: its routes interleave with the host's inside one
+    # `namespace :v1`, which a mount cannot express). So the host and the dummy call
+    # Sync.draw_v1_routes themselves, and the definition has to exist before either does.
+    #
+    # `require`, not autoload: routes are drawn during initialization, before Zeitwerk is ready --
+    # the same reason sync_module.rb is required rather than autoloaded.
+    config.before_initialize { require_relative "v1_routes" }
+
     # `lib/` IS NOT AN AUTOLOAD ROOT FOR A Rails::Engine BY DEFAULT -- ONLY `app/*` IS, FOR FREE.
     # The host gets its `lib/sync/postgres_pooler_check.rb` autoloaded via `config.autoload_lib`
     # in config/application.rb, but that method is defined on `Rails::Application::Configuration`

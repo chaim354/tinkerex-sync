@@ -20,6 +20,31 @@ has those should not be made to adopt a second set.
 | `ApplicationRecord`, `ApplicationJob`, `ApplicationCable::Channel` | Every engine class names these explicitly, so `isolate_namespace` cannot misresolve them. |
 | `limits_concurrency` on `ApplicationJob` | Used by `Sync::RetentionJob`. This is **solid_queue's extension, not core ActiveJob** — the gemspec does not depend on solid_queue, because the host picks its own queue adapter. |
 | Routes | `Sync.draw_v1_routes(mapper)`, called inside your own `namespace :v1`. |
+| **Action Cable adapter** | `config/cable.yml`. The engine broadcasts on every commit, mutation and restore — that is how devices learn there is something to pull. With no adapter configured, ActionCable's config is `nil` and the broadcast raises `undefined method 'fetch' for nil` **from inside the commit**, naming neither cable nor configuration. The engine cannot default it: `async` is wrong for more than one process, `redis` needs a server, `solid_cable` needs a database. |
+| **Device enrolment** | The engine draws **no** devices route — obtaining a token is entirely yours, which is why `Device` is in `HOST_MODELS`. `host/` ships one answer (an operator-minted first token, siblings enrolled by an authenticated device, no password anywhere). |
+
+### What the engine defaults for you
+
+`config.x.verify_finalize` — read by `Sync::V1::CommitsController#finalize`. Until 2026-08-21 only
+the tinkerex monorepo set it, so every other host got an **empty `OrderedOptions`** (not `nil` —
+`config.x.anything` auto-vivifies, and an empty one is *truthy*) and finalize crashed further in. The
+engine now defaults it in its own railtie; a host initializer still wins.
+
+## `host/` — a standalone sync server
+
+A small, real Rails app: the engine, the three models, device enrolment, and nothing else. It is
+what `chunk_remote` in the tinkerex maker app talks to.
+
+```sh
+cd host
+bin/rails db:prepare
+EMAIL=you@example.com bin/rails sync:device:issue   # prints a device token, once
+STORAGE_BACKEND=local bin/rails server
+```
+
+`test/dummy` remains, and is not redundant: it proves the engine boots with **only** the declared
+obligations supplied, which a real host cannot prove because it supplies more. Two apps, two
+questions, and they run in separate processes because two Rails applications cannot boot in one.
 
 `Device` staying host-side is deliberate: its token is the only credential the v1 API accepts, so
 an engine that owned it would leave a host's own API unable to authenticate.

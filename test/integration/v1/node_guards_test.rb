@@ -181,7 +181,8 @@ module V1
       assert_empty JSON.parse(response.body)["urls"]
 
       # Over the cap → 422.
-      too_many = Array.new(V1::ChunksController::MAX_DOWNLOAD_HASHES + 1) { SecureRandom.hex(32) }
+      # Sync::V1::ChunksController -- Stage 3b Phase B Task 7 moved it into the engine.
+      too_many = Array.new(Sync::V1::ChunksController::MAX_DOWNLOAD_HASHES + 1) { SecureRandom.hex(32) }
       post "/v1/chunks/download", params: { hashes: too_many }, as: :json, headers: auth(token)
       assert_response :unprocessable_entity
     end

@@ -57,6 +57,30 @@ module Sync
     # the same reason sync_module.rb is required rather than autoloaded.
     config.before_initialize { require_relative "v1_routes" }
 
+    # THE ENGINE DEFAULTS ITS OWN CONFIGURATION, because it is the engine that READS it.
+    # Sync::V1::CommitsController#finalize passes `Rails.configuration.x.verify_finalize` into
+    # Sync::Commit.finalize. Until 2026-08-21 only chaim354/tinkerex set it, in an initializer of its
+    # own -- so every OTHER host got `nil`, and finalize crashed deep inside the commit rather than
+    # anywhere that named the missing setting. Found by building a second host, which is the only
+    # thing that could have found it: test/dummy proves the engine BOOTS and never exercised this.
+    #
+    # A HOST STILL WINS: application initializers run after a railtie's, so anything a host sets
+    # replaces this. Same shape as Sync.capability_check defaulting to "available, always" -- a bare
+    # mount has to work without its operator having read this source to discover what to set.
+    #
+    # THE GUARD TESTS FOR A BOOLEAN, NOT FOR nil, AND THAT IS THE WHOLE SUBTLETY. `config.x.anything`
+    # AUTO-VIVIFIES: an unset key answers a fresh, EMPTY ActiveSupport::OrderedOptions, never nil --
+    # and an empty OrderedOptions is TRUTHY. So a `nil?` check for "unset" can never fire (tried
+    # first, and it silently did nothing), and the original expression was handing
+    # Sync::Commit.finalize a truthy OrderedOptions as `verify:` on every host but the one that set
+    # it. It did not read as "verification is on"; it crashed further in, on a nil the option object
+    # led to.
+    initializer "tinkerex_sync.verify_finalize" do |app|
+      unless [ true, false ].include?(app.config.x.verify_finalize)
+        app.config.x.verify_finalize = ENV.fetch("SYNC_VERIFY_FINALIZE", "1") == "1"
+      end
+    end
+
     # `lib/` IS NOT AN AUTOLOAD ROOT FOR A Rails::Engine BY DEFAULT -- ONLY `app/*` IS, FOR FREE.
     # The host gets its `lib/sync/postgres_pooler_check.rb` autoloaded via `config.autoload_lib`
     # in config/application.rb, but that method is defined on `Rails::Application::Configuration`

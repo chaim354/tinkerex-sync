@@ -19,3 +19,13 @@ Rake::TestTask.new(:test) do |t|
 end
 
 task default: :test
+
+# THE HOST'S SUITE RUNS IN ITS OWN PROCESS, because two Rails applications cannot boot in one. The
+# default `test` task boots test/dummy (proving the engine needs only the three declared models);
+# this boots host/ (proving the thing an operator actually runs works). Neither can stand in for the
+# other, and running them together would just mean whichever loaded first won.
+Rake::TestTask.new("test:host") do |t|
+  t.libs << "host/test"
+  t.pattern = "host/test/**/*_test.rb"
+  t.verbose = false
+end

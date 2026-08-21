@@ -1,4 +1,25 @@
 module FileLayer
+  # THE ONE FILE IN app/services/file_layer/ THAT LIVES IN THE ENGINE, NOT THE HOST -- Stage 3b
+  # Phase B Task 7. Everything else under FileLayer:: (the factory in app/services/file_layer.rb,
+  # Share, S3, Capabilities, Delivery, the shared error classes) stays host: FileLayer IS the
+  # maker layer's port abstraction, and Share/S3 are host-owned storage adapters with nothing
+  # engine-shaped about them. This one class is the exception, because it is not really a NEW
+  # adapter so much as a THIN WRAPPER: every method here delegates straight into Sync::Commit,
+  # Sync::Mutation, Sync::SubtreeDelete, Sync::Storage::ChunkStore -- engine services this file
+  # exists only to expose through the port's vocabulary (CLAUDE.md §14a).
+  #
+  # STILL `FileLayer::Chunk`, NOT `Sync::FileLayer::Chunk` -- deliberately kept in the HOST'S
+  # namespace despite living in the engine's own directory tree. `FileLayer` is not pre-defined
+  # the way `Sync` is (no isolate_namespace analog forces it), so Zeitwerk autovivifies it
+  # normally the first time anything references it, from WHICHEVER root gets there first, and
+  # is fine having two physical roots (this engine's app/services/file_layer/ and the host's)
+  # both contribute files under that one logical namespace -- confirmed with a bare
+  # Zeitwerk::Loader probe (two push_dir calls, two roots, a bare sibling-namespace constant
+  # lookup across the root boundary) before this file moved for real. Renaming it to
+  # `Sync::FileLayer::Chunk` would break every caller (FileLayer.build's `Chunk.new`,
+  # `rescue_from FileLayer::UnsupportedOperation` in the maker controllers) for a rename that
+  # buys nothing -- this class's whole reason to exist is being reachable AS a FileLayer adapter.
+  #
   # The chunk-store adapter: the sync engine's content-addressed store, where a file's bytes
   # are the ordered manifest_chunks of an immutable version. This is the ONLY adapter that
   # can restore history, so its content_token is a version UUID.

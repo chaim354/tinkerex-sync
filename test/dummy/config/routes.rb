@@ -6,7 +6,8 @@
 # it." That was an honest description of a real gap -- and the gap is now closed, so the note is
 # gone rather than left to mislead.
 #
-# The engine has its own config/routes.rb. Both this app and the host call Sync.draw_v1_routes,
+# The engine owns its routes, in lib/tinkerex_sync/v1_routes.rb -- NOT at config/routes.rb, which
+# Rails::Engine reserves and evaluates itself. Both this app and the host call Sync.draw_v1_routes,
 # and engine_routes_test.rb asserts the two draw the same paths, so neither can quietly fall
 # behind the other. See the engine's routes file for why it is a drawer rather than a mount.
 Rails.application.routes.draw do

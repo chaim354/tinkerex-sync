@@ -6,7 +6,7 @@ module Sync
       # app/controllers/concerns/v1/stash_request_base_url.rb for the full argument. Explicitly
       # qualified `::V1::` -- that file stays HOST (see Sync::V1::CommitsController's comment and
       # Sync::V1::BaseController's header for why).
-      include ::V1::StashRequestBaseUrl
+      include Sync::V1::StashRequestBaseUrl
 
       # Hydration presigns CHUNKS, which only a chunk-mode library has -- so the gate is `syncable`
       # and emphatically NOT `presignable`. S3 answers presignable: TRUE (that is the whole point of

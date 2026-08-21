@@ -3,18 +3,15 @@
 # because that generator pulls in a full second application's worth of scaffolding (mailers,
 # credentials, a second asset pipeline...) for a target whose ENTIRE job is proving the engine
 # loads with nothing but User/Node/Device/ApplicationRecord/ApplicationJob/ApplicationCable
-# supplied. Every file under test/dummy exists because something under engines/tinkerex-sync/app
-# or lib demonstrably needs it -- see the dummy's own README-shaped comments for the trail.
+# supplied. Every file under test/dummy exists because something under this repository's app/
+# or lib/ demonstrably needs it -- see the dummy's own README-shaped comments for the trail.
 #
-# BUNDLE_GEMFILE POINTS AT THE MONOREPO ROOT, DELIBERATELY, NOT A SECOND GEMFILE HERE. This
-# engine is not yet its own repository (Stage 3b Phase B moved the CODE into engines/tinkerex-sync/
-# but the gem is still consumed via `gem "tinkerex-sync", path: "engines/tinkerex-sync"` in the
-# monorepo's own Gemfile -- see that file's own comment). A second Gemfile+Gemfile.lock pair here
-# would either drift from the one the whole rest of CI already trusts, or require a second
-# `bundle install` that buys nothing: every gem this dummy app or the engine's tests need
-# (rails, aws-sdk-s3, concurrent-ruby, minitest...) is already resolved there. When tinkerex-sync
-# is genuinely extracted into its own repository, this file's job is done by a real
-# `engines/tinkerex-sync/Gemfile` (the standard `gemspec` one-liner) and this comment goes with it.
-ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../../../../../Gemfile", __dir__)
+# BUNDLE_GEMFILE IS THIS REPOSITORY'S OWN ROOT Gemfile, which is a `gemspec` one-liner. Until the
+# 2026-08-20 extraction this pointed five levels up into the tinkerex monorepo, because the engine
+# was consumed from there via `gem "tinkerex-sync", path: "engines/tinkerex-sync"` and a second
+# Gemfile would only have drifted from the one the rest of that CI already trusted. That reason
+# expired with the move: there is no monorepo above this file any more, so the path it used to
+# resolve does not exist and the indirection it bought is gone.
+ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../../../Gemfile", __dir__)
 
 require "bundler/setup"

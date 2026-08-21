@@ -11,15 +11,12 @@
 # check evaluates the identical text (`module_eval(EngineSchema.render, ...)`) rather than treating
 # it as a library to require once.
 #
-# THE PATH REACHES OUTSIDE engines/tinkerex-sync/ ON PURPOSE, AND ONLY FOR AS LONG AS THAT IS TRUE
-# (see this dummy's config/boot.rb for the identical caveat about BUNDLE_GEMFILE): tinkerex-sync
-# is still consumed from inside the tinkerex monorepo via a `path:` Gemfile source, not yet its
-# own repository, so db/engine_schema.rb has nowhere else to live today. Once Phase B's eventual
-# `git filter-repo` extraction happens, the gem carries its OWN copy of this migration (Phase B's
-# stated plan: "Phase B copies it into the gem near-verbatim" -- lib/engine_schema.rb's header),
-# and this `load` line is replaced by that copy, not by another indirection.
+# THE PATH IS THIS REPOSITORY'S OWN db/engine_schema.rb. Before the 2026-08-20 extraction it
+# reached six levels up into the tinkerex monorepo, because the engine lived at
+# engines/tinkerex-sync/ and that file had nowhere else to be. The gem now carries the copy the
+# extraction plan named, so this is an ordinary in-repo load and not an indirection at all.
 #
 # CreateSyncEngine's own `add_foreign_key ..., "users"` lines (all eight) are exactly why the
 # OTHER migration in this directory (CreateHostStandins) must run first -- Rails runs migrations
 # in timestamp order, and this file's timestamp is deliberately later.
-load File.expand_path("../../../../../../db/engine_schema.rb", __dir__)
+load File.expand_path("../../../../db/engine_schema.rb", __dir__)

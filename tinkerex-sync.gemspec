@@ -15,6 +15,8 @@ Gem::Specification.new do |spec|
     The host provides User, Node and Device (see TinkerexSync::HOST_MODELS).
   TEXT
   spec.license  = "MIT"
+  spec.homepage = "https://github.com/chaim354/tinkerex-sync"
+  spec.metadata = { "source_code_uri" => spec.homepage }
   spec.required_ruby_version = ">= 3.4"
 
   spec.files = Dir["{app,config,db,lib}/**/*", "MIT-LICENSE", "README.md"]

@@ -34,3 +34,14 @@ jobs:
         env:
           RAILS_ENV: test
         run: bundle exec rake test
+
+      # A SECOND PROCESS, because two Rails applications cannot boot in one. The step above proves
+      # the engine needs nothing but the three declared models; this one proves the app an operator
+      # actually runs works -- and it is what found both host obligations the dummy never exercised
+      # (config.x.verify_finalize, and Action Cable having no adapter at all).
+      - name: The standalone host's suite
+        env:
+          RAILS_ENV: test
+        run: |
+          (cd host && bin/rails db:prepare)
+          bundle exec rake test:host

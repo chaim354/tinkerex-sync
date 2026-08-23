@@ -12,6 +12,11 @@ Rails.application.routes.draw do
     get "devices/whoami", to: "devices#whoami"
   end
 
+  # A HEALTH ENDPOINT, because a service meant to be deployed needs one and this had none -- kamal,
+  # Docker and every load balancer probe a path, and 404 reads as "the app is broken" rather than
+  # "there is nothing here". Found by curling /up on the running host, which no test does.
+  get "up", to: proc { [ 200, { "Content-Type" => "text/plain" }, [ "ok" ] ] }
+
   # Local-only chunk blobs, so `bin/rails server` with STORAGE_BACKEND=local is a working sync
   # server with no object storage to stand up. A real deployment sets STORAGE_BACKEND=s3 and these
   # are never reached.

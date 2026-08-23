@@ -39,8 +39,22 @@ what `chunk_remote` in the tinkerex maker app talks to.
 cd host
 bin/rails db:prepare
 EMAIL=you@example.com bin/rails sync:device:issue   # prints a device token, once
-STORAGE_BACKEND=local bin/rails server
+STORAGE_BACKEND=local bin/rails server -p 3002
 ```
+
+Then point a maker app at it:
+
+```sh
+LIBRARY_BACKEND=chunk_remote \
+CHUNK_REMOTE_URL=http://127.0.0.1:3002 \
+CHUNK_REMOTE_TOKEN=<the token above> \
+  bin/rails server
+```
+
+**Verified end to end on 2026-08-22**, two processes with separate databases: upload (bytes
+straight to storage, proxied by neither app), finalize, changelog pull, local-SQL `stat`, byte read,
+`download`, `mkdir` and `move` with the `node_id` preserved — with `Sync` **undefined** in the maker
+app's process throughout.
 
 `test/dummy` remains, and is not redundant: it proves the engine boots with **only** the declared
 obligations supplied, which a real host cannot prove because it supplies more. Two apps, two

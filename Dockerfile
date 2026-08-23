@@ -61,5 +61,8 @@ RUN mkdir -p host/storage host/tmp host/log && chown -R rails:rails host
 USER 1000:1000
 WORKDIR /rails/host
 
+# db:prepare RUNS HERE, NOT IN CMD, so it happens for the server and NOT for `kamal app exec`.
+ENTRYPOINT ["/rails/host/bin/docker-entrypoint"]
+
 EXPOSE 3000
 CMD ["bin/rails", "server", "-b", "0.0.0.0", "-p", "3000"]

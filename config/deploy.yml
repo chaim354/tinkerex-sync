@@ -9,6 +9,15 @@
 service: tinkerex-sync
 image: chaim354/tinkerex-sync
 
+# THE SSH USER, WITHOUT WHICH KAMAL TRIES root. Missing on the first deploy attempt, and the
+# failure did not name it: `kamal setup` prompted for root@192.168.1.95's password and then died as
+# `Errno::ENODEV: Operation not supported by device` -- a non-tty being asked for a password, not
+# anything about a device. The maker app's own deploy.yml has declared `user: kamal1` all along;
+# this file was written from its structure and dropped the one block that has no default worth
+# having.
+ssh:
+  user: kamal1
+
 servers:
   web:
     - 192.168.1.95      # the same Unraid VM the maker app runs on; change if this moves

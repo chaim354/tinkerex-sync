@@ -15,7 +15,21 @@ Rails.application.routes.draw do
   # A HEALTH ENDPOINT, because a service meant to be deployed needs one and this had none -- kamal,
   # Docker and every load balancer probe a path, and 404 reads as "the app is broken" rather than
   # "there is nothing here". Found by curling /up on the running host, which no test does.
-  get "up", to: proc { [ 200, { "Content-Type" => "text/plain" }, [ "ok" ] ] }
+  # TOUCHES THE DATABASE, because a static 200 is worse than no healthcheck at all. The first real
+  # deployment of this app reported healthy on both proxy hostnames while its schema was EMPTY --
+  # `Could not find table 'users'` the moment anything read one. A probe that cannot fail tells an
+  # orchestrator to send traffic to an app that cannot serve it.
+  #
+  # Cheap on purpose: one count against the smallest host table, not a query per engine table. It
+  # answers "is there a schema and can I reach it", which is the question that was silently wrong.
+  get "up", to: proc {
+    begin
+      User.count
+      [ 200, { "Content-Type" => "text/plain" }, [ "ok" ] ]
+    rescue StandardError => e
+      [ 503, { "Content-Type" => "text/plain" }, [ "not ready: #{e.class}" ] ]
+    end
+  }
 
   # Local-only chunk blobs, so `bin/rails server` with STORAGE_BACKEND=local is a working sync
   # server with no object storage to stand up. A real deployment sets STORAGE_BACKEND=s3 and these

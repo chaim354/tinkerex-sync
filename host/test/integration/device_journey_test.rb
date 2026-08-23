@@ -32,6 +32,20 @@ class DeviceJourneyTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
+  test "the health endpoint READS THE DATABASE, so it cannot pass on an unmigrated app" do
+    # The first real deployment reported healthy on both proxy hostnames while its schema was EMPTY.
+    # /up was a static 200 that never touched a table, so nothing anywhere said the app could not
+    # serve a single request. A probe that cannot fail is worse than no probe.
+    #
+    # A singleton method rather than `stub`: minitest 6 dropped Object#stub, which this repo has no
+    # replacement for. Removed in the ensure so it cannot leak into another test in this process.
+    User.define_singleton_method(:count) { raise ActiveRecord::StatementInvalid, "Could not find table 'users'" }
+    get "/up"
+    assert_response :service_unavailable
+  ensure
+    User.singleton_class.send(:remove_method, :count)
+  end
+
   test "an unknown token is refused, so the engine is not open" do
     get "/v1/tree", headers: { "Authorization" => "Bearer not-a-real-token" }
     assert_response :unauthorized

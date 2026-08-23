@@ -115,10 +115,23 @@ serves JSON.
 ```sh
 kamal setup                                   # first time
 kamal deploy
-kamal issue                                   # -> a device token, printed once
+kamal app exec --reuse "env EMAIL=you@example.com NAME=laptop bin/rails sync:device:issue"
 ```
 
-Two things worth reading before the first deploy:
+That last one prints a device token **once** and keeps only its digest. Capture it into a file
+rather than reading it off the terminal; it is 43 base64url characters, not hex, and a pattern
+written for hex silently matches nothing.
+
+Three things worth reading before the first deploy:
+
+- **`db:prepare` runs from the entrypoint, not from `CMD`.** Without it the container comes up on
+  an empty volume with no schema. That is how the first real deploy shipped: kamal reported
+  success, the proxy reported healthy, and the first command to touch a table said
+  `Could not find table 'users'`. The entrypoint guards on the command really being the server, so
+  `kamal app exec` and one-off rake tasks do not migrate as a side effect of running.
+- **`/up` reads the database, and it has to.** A static 200 answers healthy for an app that cannot
+  serve a single request, which is worse than having no probe at all — it actively tells the proxy
+  to send traffic. Keep it a real query.
 
 - **The volume holds the library, not a cache.** With `STORAGE_BACKEND=local` it is both the SQLite
   database and every chunk byte. It must be a real device, not a plain-local docker volume — a
@@ -127,10 +140,17 @@ Two things worth reading before the first deploy:
 - **`CABLE_ADAPTER: async` is in-process only.** One web container is fine; with two, devices
   attached to one never hear the other's broadcasts and nothing reports it.
 
-**Not deployed as of 2026-08-23.** The image was built and exercised — a container serving `/up` 200,
-`/v1/tree` 401 unauthenticated, and `/v1/devices/whoami` answering with a real minted token — but
-nothing has been pushed to a registry or rolled onto a host, and `servers:` is the operator's to
-confirm.
+**Deployed 2026-08-23** to `192.168.1.95` (Unraid VM), reachable as `sync.tinkerex.local` and
+`sync.tinkerex.home`. Verified against the running host, not against the suite: all eight engine
+tables plus the three host tables present; `/up` 200 on both hostnames; `/v1/tree` 401
+unauthenticated and 200 with a minted device token; and a full mutation round trip —
+`POST /v1/nodes` -> `GET /v1/tree` -> `GET /v1/changes` -> `POST /v1/nodes/:id/move` ->
+`DELETE` -> `GET /v1/trash` -> `POST /v1/trash/:id/restore`, with `head_seq` advancing 1 -> 5 and
+each op appearing in the changelog. Probe data purged afterwards; the host is empty apart from one
+issued device.
+
+**The maker app is not pointed at it yet.** Nothing sets `LIBRARY_BACKEND=chunk_remote` against
+this host; the three Unraid backends still run their own way. That cutover is a separate change.
 
 ## History
 

@@ -1,0 +1,10 @@
+/.git/
+/.github/
+/host/storage/*
+/host/tmp/*
+/host/log/*
+/test/dummy/storage/*
+/test/dummy/tmp/*
+/test/dummy/log/*
+*.gem
+/pkg/

@@ -105,6 +105,33 @@ Postgres.)
 job is to prove the engine loads and runs in a process that has never seen the application it was
 extracted from.
 
+## Deploying it
+
+`Dockerfile` and `config/deploy.yml` are here. The image is **422 MB** against the maker app's
+1.59 GB, because this one installs none of what that one needs — libvips, pdfium, resvg, f3d, the
+Rust STL thumbnailer, Node and asset precompilation. This app is `api_only`; it holds chunks and
+serves JSON.
+
+```sh
+kamal setup                                   # first time
+kamal deploy
+kamal issue                                   # -> a device token, printed once
+```
+
+Two things worth reading before the first deploy:
+
+- **The volume holds the library, not a cache.** With `STORAGE_BACKEND=local` it is both the SQLite
+  database and every chunk byte. It must be a real device, not a plain-local docker volume — a
+  missing volume is not an error to docker, it silently *creates* one on the VM's own disk and
+  everything looks healthy.
+- **`CABLE_ADAPTER: async` is in-process only.** One web container is fine; with two, devices
+  attached to one never hear the other's broadcasts and nothing reports it.
+
+**Not deployed as of 2026-08-23.** The image was built and exercised — a container serving `/up` 200,
+`/v1/tree` 401 unauthenticated, and `/v1/devices/whoami` answering with a real minted token — but
+nothing has been pushed to a registry or rolled onto a host, and `servers:` is the operator's to
+confirm.
+
 ## History
 
 This engine was extracted from the [tinkerex](https://github.com/chaim354/tinkerex) monorepo on

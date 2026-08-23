@@ -1,17 +1,23 @@
-# SQLite only -- this dummy app has no `production` environment to prove Postgres compatibility
-# for (that is the HOST's job; the engine's models are the same adapter-agnostic AR code either
-# way, and CLAUDE.md §14e's Postgres-specific concerns -- the pooler check, the FOR UPDATE lock --
-# are exercised by config/services/sync/concurrent_seq_test.rb against whichever adapter this
-# file names, same as the host's own copy of that test).
-#
-# `timeout: 15000` mirrors the host's config/database.yml verbatim -- CLAUDE.md §12.7/§14e: this
-# is the fix for a measured SQLite fsync stall under concurrent writers, not a per-app tuning
-# knob, and test/services/sync/concurrent_seq_test.rb (moved into this suite) hammers exactly the
-# lock this protects.
+# THE STANDALONE HOST'S DATABASE. Inherited from test/dummy, which defined `test` and nothing else --
+# so the app shipped unable to run in the one mode an operator actually uses. Found by trying to
+# start it, which is the only thing that could have found it: every suite runs in `test`.
 default: &default
   adapter: sqlite3
-  timeout: 15000
+  timeout: 15000          # a stalled fsync, not bad lock logic -- see the tinkerex CLAUDE.md §14e
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
+
+development:
+  <<: *default
+  database: storage/development.sqlite3
 
 test:
   <<: *default
   database: storage/test.sqlite3
+
+# SQLITE IS THE SELF-HOST DEFAULT AND POSTGRES THE MANAGED ONE, same as the maker app: the models
+# are adapter-agnostic. DATABASE_URL wins when set, which is how a container points at Postgres
+# without this file changing.
+production:
+  <<: *default
+  database: <%= ENV.fetch("SQLITE_DATABASE", "storage/production.sqlite3") %>
+  url: <%= ENV["DATABASE_URL"] %>

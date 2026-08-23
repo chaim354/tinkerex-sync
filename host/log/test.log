@@ -1672,3 +1672,184 @@ Processing by Sync::V1::TreeController#index as HTML
 Filter chain halted as :authenticate_device! rendered or redirected
 Completed 401 Unauthorized in 0ms (Views: 0.0ms | ActiveRecord: 0.0ms (1 query, 0 cached) | GC: 0.0ms)
   [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mActiveRecord::SchemaMigration Load (0.1ms)[0m  [1m[34mSELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC[0m
+  [1m[36mActiveRecord::InternalMetadata Load (0.1ms)[0m  [1m[34mSELECT * FROM "ar_internal_metadata" WHERE "ar_internal_metadata"."key" = ? ORDER BY "ar_internal_metadata"."key" ASC LIMIT 1[0m  [[nil, "schema_sha1"]]
+  [1m[36mActiveRecord::SchemaMigration Load (0.0ms)[0m  [1m[34mSELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+----------------------------------------------------------------------------------------
+DeviceJourneyTest: test_a_device_enrols_a_sibling_without_any_password_existing_anywhere
+----------------------------------------------------------------------------------------
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Exists? (0.1ms)[0m  [1m[34mSELECT 1 AS one FROM "users" WHERE "users"."email" = ? LIMIT ?[0m  [["email", "operator@example.com"], ["LIMIT", 1]]
+  [1m[36mUser Create (0.1ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "head_seq", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.261485"], ["email", "operator@example.com"], ["head_seq", 0], ["updated_at", "2026-08-23 03:10:06.261485"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mDevice Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "b88b303d16c5413fe49a72db3c308ee6a3c9ff01d8cdf3d9d03de1f778ee72e1"], ["LIMIT", 1]]
+  [1m[36mDevice Create (0.0ms)[0m  [1m[32mINSERT INTO "devices" ("created_at", "last_seen_at", "name", "token_digest", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.265383"], ["last_seen_at", nil], ["name", "maker-app"], ["token_digest", "b88b303d16c5413fe49a72db3c308ee6a3c9ff01d8cdf3d9d03de1f778ee72e1"], ["updated_at", "2026-08-23 03:10:06.265383"], ["user_id", 4]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Started POST "/v1/devices" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by V1::DevicesController#create as HTML
+  Parameters: {"name" => "laptop"}
+  [1m[36mDevice Load (0.1ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "b88b303d16c5413fe49a72db3c308ee6a3c9ff01d8cdf3d9d03de1f778ee72e1"], ["LIMIT", 1]]
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 4], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:10:06.300007"], ["id", 2]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mDevice Exists? (0.1ms)[0m  [1m[34mSELECT 1 AS one FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "c323150616d71a21a279312bb80560344cbd13f45e77c3f14791da7d639a7e3c"], ["LIMIT", 1]]
+  [1m[36mDevice Create (0.0ms)[0m  [1m[32mINSERT INTO "devices" ("created_at", "last_seen_at", "name", "token_digest", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.305189"], ["last_seen_at", nil], ["name", "laptop"], ["token_digest", "c323150616d71a21a279312bb80560344cbd13f45e77c3f14791da7d639a7e3c"], ["updated_at", "2026-08-23 03:10:06.305189"], ["user_id", 4]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Completed 201 Created in 7ms (Views: 0.1ms | ActiveRecord: 0.3ms (5 queries, 0 cached) | GC: 0.0ms)
+Started GET "/v1/devices/whoami" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by V1::DevicesController#whoami as HTML
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "c323150616d71a21a279312bb80560344cbd13f45e77c3f14791da7d639a7e3c"], ["LIMIT", 1]]
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 4], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:10:06.308204"], ["id", 3]]
+Completed 200 OK in 0ms (Views: 0.0ms | ActiveRecord: 0.1ms (3 queries, 0 cached) | GC: 0.0ms)
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+-------------------------------------------------------------------------------------
+DeviceJourneyTest: test_the_full_file_journey:_commit,_changelog,_hydrate,_bytes_back
+-------------------------------------------------------------------------------------
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Exists? (0.1ms)[0m  [1m[34mSELECT 1 AS one FROM "users" WHERE "users"."email" = ? LIMIT ?[0m  [["email", "operator@example.com"], ["LIMIT", 1]]
+  [1m[36mUser Create (0.0ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "head_seq", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.309133"], ["email", "operator@example.com"], ["head_seq", 0], ["updated_at", "2026-08-23 03:10:06.309133"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mDevice Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "dfc2f7b915f29a53cf5a5471139d4e9683ef3cf3b97523cac3b0b13d13fb1c8d"], ["LIMIT", 1]]
+  [1m[36mDevice Create (0.0ms)[0m  [1m[32mINSERT INTO "devices" ("created_at", "last_seen_at", "name", "token_digest", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.309515"], ["last_seen_at", nil], ["name", "maker-app"], ["token_digest", "dfc2f7b915f29a53cf5a5471139d4e9683ef3cf3b97523cac3b0b13d13fb1c8d"], ["updated_at", "2026-08-23 03:10:06.309515"], ["user_id", 4]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Started POST "/v1/commit" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by Sync::V1::CommitsController#create as HTML
+  Parameters: {"commit_id" => "d0f8bb63-a464-41eb-b688-feb4136fabf2", "node_id" => "e449bd37-6194-4ff1-99d0-39877e44c53e", "name" => "journey.stl", "size" => "26", "mtime" => "1787454606310154000", "manifest" => [{"hash" => "b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c", "offset" => "0", "length" => "26"}]}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "dfc2f7b915f29a53cf5a5471139d4e9683ef3cf3b97523cac3b0b13d13fb1c8d"], ["LIMIT", 1]]
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 4], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:10:06.311353"], ["id", 2]]
+  [1m[36mSync::PendingCommit Load (0.0ms)[0m  [1m[34mSELECT "pending_commits".* FROM "pending_commits" WHERE "pending_commits"."user_id" = ? AND "pending_commits"."commit_id" = ? LIMIT ?[0m  [["user_id", 4], ["commit_id", "d0f8bb63-a464-41eb-b688-feb4136fabf2"], ["LIMIT", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mSync::PendingCommit Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "pending_commits" WHERE "pending_commits"."commit_id" = ? AND "pending_commits"."user_id" = ? LIMIT ?[0m  [["commit_id", "d0f8bb63-a464-41eb-b688-feb4136fabf2"], ["user_id", 4], ["LIMIT", 1]]
+  [1m[36mSync::PendingCommit Create (0.0ms)[0m  [1m[32mINSERT INTO "pending_commits" ("base_version_id", "commit_id", "created_at", "device_id", "manifest_id", "manifest_json", "mode", "mtime", "name", "node_id", "parent_node_id", "size", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["base_version_id", nil], ["commit_id", "d0f8bb63-a464-41eb-b688-feb4136fabf2"], ["created_at", "2026-08-23 03:10:06.315322"], ["device_id", 2], ["manifest_id", "652493ac008eb04decc6e1da87cb2125474d5c67634353f21f87957cd102b9f3"], ["manifest_json", "[{\"hash\":\"b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c\",\"offset\":0,\"length\":26}]"], ["mode", nil], ["mtime", 1787454606310154000], ["name", "journey.stl"], ["node_id", "e449bd37-6194-4ff1-99d0-39877e44c53e"], ["parent_node_id", nil], ["size", 26], ["updated_at", "2026-08-23 03:10:06.315322"], ["user_id", 4]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mSync::Chunk Pluck (0.0ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 4], ["chunk_hash", "b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c"]]
+Completed 200 OK in 5ms (Views: 0.0ms | ActiveRecord: 0.3ms (7 queries, 0 cached) | GC: 0.0ms)
+Started POST "/v1/commit/d0f8bb63-a464-41eb-b688-feb4136fabf2/finalize" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by Sync::V1::CommitsController#finalize as HTML
+  Parameters: {"commit_id" => "d0f8bb63-a464-41eb-b688-feb4136fabf2"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "dfc2f7b915f29a53cf5a5471139d4e9683ef3cf3b97523cac3b0b13d13fb1c8d"], ["LIMIT", 1]]
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 4], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:10:06.316773"], ["id", 2]]
+  [1m[36mSync::PendingCommit Load (0.0ms)[0m  [1m[34mSELECT "pending_commits".* FROM "pending_commits" WHERE "pending_commits"."user_id" = ? AND "pending_commits"."commit_id" = ? LIMIT ?[0m  [["user_id", 4], ["commit_id", "d0f8bb63-a464-41eb-b688-feb4136fabf2"], ["LIMIT", 1]]
+  [1m[36mSync::Chunk Pluck (0.0ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 4], ["chunk_hash", "b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Load (0.1ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ? [0m  [["id", 4], ["LIMIT", 1]]
+  [1m[36mUser Update (0.0ms)[0m  [1m[33mUPDATE "users" SET "head_seq" = ? WHERE "users"."id" = ?[0m  [["head_seq", 1], ["id", 4]]
+  [1m[36mSync::ManifestChunk Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "manifest_chunks" WHERE "manifest_chunks"."user_id" = ? AND "manifest_chunks"."manifest_id" = ? LIMIT ?[0m  [["user_id", 4], ["manifest_id", "652493ac008eb04decc6e1da87cb2125474d5c67634353f21f87957cd102b9f3"], ["LIMIT", 1]]
+  [1m[36mSync::ManifestChunk Insert (0.0ms)[0m  [1m[32mINSERT INTO "manifest_chunks" ("user_id","manifest_id","seq","chunk_hash","offset","length") VALUES (4, '652493ac008eb04decc6e1da87cb2125474d5c67634353f21f87957cd102b9f3', 0, 'b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c', 0, 26) ON CONFLICT  DO NOTHING RETURNING "id"[0m
+  [1m[36mSync::Chunk Pluck (0.0ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 4], ["chunk_hash", "b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c"]]
+  [1m[36mSync::Chunk Insert (0.0ms)[0m  [1m[32mINSERT INTO "chunks" ("user_id","chunk_hash","size","refcount","created_at","updated_at") VALUES (4, 'b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c', 26, 1, '2026-08-23 03:10:06.318739', '2026-08-23 03:10:06.318739') ON CONFLICT  DO NOTHING RETURNING "id"[0m
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ? LIMIT ?[0m  [["user_id", 4], ["node_id", "e449bd37-6194-4ff1-99d0-39877e44c53e"], ["LIMIT", 1]]
+  [1m[36mSync::Version Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "versions" WHERE "versions"."version_id" = ? AND "versions"."user_id" = ? LIMIT ?[0m  [["version_id", "64302d47-30cb-4343-b8c5-ef77e8d2f5d1"], ["user_id", 4], ["LIMIT", 1]]
+  [1m[36mSync::Version Create (0.0ms)[0m  [1m[32mINSERT INTO "versions" ("created_at", "device_id", "manifest_id", "node_id", "parent_version_id", "pinned", "size", "user_id", "version_id") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.321456"], ["device_id", 2], ["manifest_id", "652493ac008eb04decc6e1da87cb2125474d5c67634353f21f87957cd102b9f3"], ["node_id", "e449bd37-6194-4ff1-99d0-39877e44c53e"], ["parent_version_id", nil], ["pinned", 0], ["size", 26], ["user_id", 4], ["version_id", "64302d47-30cb-4343-b8c5-ef77e8d2f5d1"]]
+  [1m[36mNode Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "nodes" WHERE "nodes"."node_id" = ? AND "nodes"."user_id" = ? LIMIT ?[0m  [["node_id", "e449bd37-6194-4ff1-99d0-39877e44c53e"], ["user_id", 4], ["LIMIT", 1]]
+  [1m[36mNode Create (0.8ms)[0m  [1m[32mINSERT INTO "nodes" ("created_at", "current_version_id", "deleted", "kind", "mode", "mtime", "name", "node_id", "parent_node_id", "symlink_target", "updated_at", "updated_seq", "user_id") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.322980"], ["current_version_id", "64302d47-30cb-4343-b8c5-ef77e8d2f5d1"], ["deleted", 0], ["kind", "file"], ["mode", 420], ["mtime", 1787454606310154000], ["name", "journey.stl"], ["node_id", "e449bd37-6194-4ff1-99d0-39877e44c53e"], ["parent_node_id", nil], ["symlink_target", nil], ["updated_at", "2026-08-23 03:10:06.322980"], ["updated_seq", 1], ["user_id", 4]]
+  [1m[36mSync::ChangelogEntry Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "changelog_entries" WHERE "changelog_entries"."seq" = ? AND "changelog_entries"."user_id" = ? LIMIT ?[0m  [["seq", 1], ["user_id", 4], ["LIMIT", 1]]
+  [1m[36mSync::ChangelogEntry Create (0.1ms)[0m  [1m[32mINSERT INTO "changelog_entries" ("created_at", "node_id", "op", "seq", "user_id", "version_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.324436"], ["node_id", "e449bd37-6194-4ff1-99d0-39877e44c53e"], ["op", "put"], ["seq", 1], ["user_id", 4], ["version_id", "64302d47-30cb-4343-b8c5-ef77e8d2f5d1"]]
+  [1m[36mSync::PendingCommit Destroy (0.0ms)[0m  [1m[31mDELETE FROM "pending_commits" WHERE "pending_commits"."id" = ?[0m  [["id", 2]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+[ActionCable] Broadcasting to sync:library:Z2lkOi8vc3luYy1ob3N0L1VzZXIvNA: {head_seq: 1}
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ? LIMIT ?[0m  [["user_id", 4], ["node_id", "e449bd37-6194-4ff1-99d0-39877e44c53e"], ["LIMIT", 1]]
+Completed 200 OK in 13ms (Views: 0.0ms | ActiveRecord: 1.7ms (20 queries, 0 cached) | GC: 0.0ms)
+Started GET "/v1/changes?since=0" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by Sync::V1::ChangesController#index as HTML
+  Parameters: {"since" => "0"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "dfc2f7b915f29a53cf5a5471139d4e9683ef3cf3b97523cac3b0b13d13fb1c8d"], ["LIMIT", 1]]
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 4], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:10:06.330194"], ["id", 2]]
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 4], [nil, 0], ["LIMIT", 500]]
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ?[0m  [["user_id", 4], ["node_id", "e449bd37-6194-4ff1-99d0-39877e44c53e"]]
+  [1m[36mSync::Version Load (0.0ms)[0m  [1m[34mSELECT "versions".* FROM "versions" WHERE "versions"."user_id" = ? AND "versions"."version_id" = ?[0m  [["user_id", 4], ["version_id", "64302d47-30cb-4343-b8c5-ef77e8d2f5d1"]]
+  [1m[36mSync::ManifestChunk Pluck (0.0ms)[0m  [1m[34mSELECT "manifest_chunks"."manifest_id", "manifest_chunks"."chunk_hash", "manifest_chunks"."offset", "manifest_chunks"."length" FROM "manifest_chunks" WHERE "manifest_chunks"."user_id" = ? AND "manifest_chunks"."manifest_id" = ? ORDER BY "manifest_chunks"."manifest_id" ASC, "manifest_chunks"."seq" ASC[0m  [["user_id", 4], ["manifest_id", "652493ac008eb04decc6e1da87cb2125474d5c67634353f21f87957cd102b9f3"]]
+  [1m[36mSync::ChangelogEntry Minimum (0.0ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 4]]
+Completed 200 OK in 1ms (Views: 0.0ms | ActiveRecord: 0.2ms (8 queries, 0 cached) | GC: 0.0ms)
+Started POST "/v1/chunks/download" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by Sync::V1::ChunksController#download as HTML
+  Parameters: {"hashes" => ["b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c"]}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "dfc2f7b915f29a53cf5a5471139d4e9683ef3cf3b97523cac3b0b13d13fb1c8d"], ["LIMIT", 1]]
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 4], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:10:06.332052"], ["id", 2]]
+  [1m[36mSync::Chunk Pluck (0.0ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 4], ["chunk_hash", "b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c"]]
+Completed 200 OK in 1ms (Views: 0.0ms | ActiveRecord: 0.1ms (4 queries, 0 cached) | GC: 0.0ms)
+Started GET "/dev/blobs/chunks/4/b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by DevBlobsController#show as HTML
+  Parameters: {"key" => "chunks/4/b5d869fd404eec741d3e9b9f56f0df13a321e080aa9fa319e75c526215e2821c"}
+  Rendering text template
+  Rendered text template (Duration: 0.0ms | GC: 0.0ms)
+Sent data  (1.7ms)
+Completed 200 OK in 2ms (Views: 1.7ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+  [1m[36mTRANSACTION (0.1ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+---------------------------------------------------------------------------------------------
+DeviceJourneyTest: test_an_operator-minted_token_authenticates_against_the_engine's_endpoints
+---------------------------------------------------------------------------------------------
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Exists? (0.1ms)[0m  [1m[34mSELECT 1 AS one FROM "users" WHERE "users"."email" = ? LIMIT ?[0m  [["email", "operator@example.com"], ["LIMIT", 1]]
+  [1m[36mUser Create (0.0ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "head_seq", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.335463"], ["email", "operator@example.com"], ["head_seq", 0], ["updated_at", "2026-08-23 03:10:06.335463"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mDevice Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "a1878780e74c1cdee9b897fcc57c047a1df9d1d15136b6a794addcfb82c86dbe"], ["LIMIT", 1]]
+  [1m[36mDevice Create (0.0ms)[0m  [1m[32mINSERT INTO "devices" ("created_at", "last_seen_at", "name", "token_digest", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.335828"], ["last_seen_at", nil], ["name", "maker-app"], ["token_digest", "a1878780e74c1cdee9b897fcc57c047a1df9d1d15136b6a794addcfb82c86dbe"], ["updated_at", "2026-08-23 03:10:06.335828"], ["user_id", 4]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Started GET "/v1/devices/whoami" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by V1::DevicesController#whoami as HTML
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "a1878780e74c1cdee9b897fcc57c047a1df9d1d15136b6a794addcfb82c86dbe"], ["LIMIT", 1]]
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 4], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:10:06.336366"], ["id", 2]]
+Completed 200 OK in 0ms (Views: 0.0ms | ActiveRecord: 0.0ms (3 queries, 0 cached) | GC: 0.0ms)
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+-------------------------------------------------------------------------------------------------
+DeviceJourneyTest: test_there_is_a_health_endpoint,_unauthenticated,_for_the_thing_that_probes_it
+-------------------------------------------------------------------------------------------------
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "users" WHERE "users"."email" = ? LIMIT ?[0m  [["email", "operator@example.com"], ["LIMIT", 1]]
+  [1m[36mUser Create (0.0ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "head_seq", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.336871"], ["email", "operator@example.com"], ["head_seq", 0], ["updated_at", "2026-08-23 03:10:06.336871"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mDevice Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "87a69282cb66d49d0263b08037763663c275cfacee1fc2454845eb086dae83b7"], ["LIMIT", 1]]
+  [1m[36mDevice Create (0.0ms)[0m  [1m[32mINSERT INTO "devices" ("created_at", "last_seen_at", "name", "token_digest", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.337167"], ["last_seen_at", nil], ["name", "maker-app"], ["token_digest", "87a69282cb66d49d0263b08037763663c275cfacee1fc2454845eb086dae83b7"], ["updated_at", "2026-08-23 03:10:06.337167"], ["user_id", 4]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Started GET "/up" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+--------------------------------------------------
+DeviceJourneyTest: test_no_token_at_all_is_refused
+--------------------------------------------------
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "users" WHERE "users"."email" = ? LIMIT ?[0m  [["email", "operator@example.com"], ["LIMIT", 1]]
+  [1m[36mUser Create (0.0ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "head_seq", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.337727"], ["email", "operator@example.com"], ["head_seq", 0], ["updated_at", "2026-08-23 03:10:06.337727"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mDevice Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "7eb9666b31542e06c67136eea67a9bd22553c0b6aaece1c79d66e41525f950d7"], ["LIMIT", 1]]
+  [1m[36mDevice Create (0.0ms)[0m  [1m[32mINSERT INTO "devices" ("created_at", "last_seen_at", "name", "token_digest", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.338018"], ["last_seen_at", nil], ["name", "maker-app"], ["token_digest", "7eb9666b31542e06c67136eea67a9bd22553c0b6aaece1c79d66e41525f950d7"], ["updated_at", "2026-08-23 03:10:06.338018"], ["user_id", 4]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Started GET "/v1/tree" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by Sync::V1::TreeController#index as HTML
+Filter chain halted as :authenticate_device! rendered or redirected
+Completed 401 Unauthorized in 0ms (Views: 0.0ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN deferred TRANSACTION[0m
+------------------------------------------------------------------------------
+DeviceJourneyTest: test_an_unknown_token_is_refused,_so_the_engine_is_not_open
+------------------------------------------------------------------------------
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mUser Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "users" WHERE "users"."email" = ? LIMIT ?[0m  [["email", "operator@example.com"], ["LIMIT", 1]]
+  [1m[36mUser Create (0.0ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "head_seq", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.338923"], ["email", "operator@example.com"], ["head_seq", 0], ["updated_at", "2026-08-23 03:10:06.338923"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mSAVEPOINT active_record_1[0m
+  [1m[36mDevice Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "9bb11242bec04025117d97ea0dc98f10db4c47fda97d94398deafd350d591949"], ["LIMIT", 1]]
+  [1m[36mDevice Create (0.0ms)[0m  [1m[32mINSERT INTO "devices" ("created_at", "last_seen_at", "name", "token_digest", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:10:06.339213"], ["last_seen_at", nil], ["name", "maker-app"], ["token_digest", "9bb11242bec04025117d97ea0dc98f10db4c47fda97d94398deafd350d591949"], ["updated_at", "2026-08-23 03:10:06.339213"], ["user_id", 4]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[35mRELEASE SAVEPOINT active_record_1[0m
+Started GET "/v1/tree" for 127.0.0.1 at 2026-08-22 23:10:06 -0400
+Processing by Sync::V1::TreeController#index as HTML
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "c4afaac67e1e5c2a2d578d8eee65b5abad08ae7dea98d619fd966250ea700609"], ["LIMIT", 1]]
+Filter chain halted as :authenticate_device! rendered or redirected
+Completed 401 Unauthorized in 0ms (Views: 0.0ms | ActiveRecord: 0.0ms (1 query, 0 cached) | GC: 0.0ms)
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[31mROLLBACK TRANSACTION[0m

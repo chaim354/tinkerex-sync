@@ -25,6 +25,13 @@ class DeviceJourneyTest < ActionDispatch::IntegrationTest
     assert_equal 0, body["head_seq"], "a fresh library has issued no seqs"
   end
 
+  test "there is a health endpoint, unauthenticated, for the thing that probes it" do
+    # kamal, Docker and every load balancer probe a path. This returned 404 until someone actually
+    # curled it -- a suite that only drives /v1 never looks at what an orchestrator looks at.
+    get "/up"
+    assert_response :success
+  end
+
   test "an unknown token is refused, so the engine is not open" do
     get "/v1/tree", headers: { "Authorization" => "Bearer not-a-real-token" }
     assert_response :unauthorized

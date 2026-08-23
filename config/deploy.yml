@@ -1,0 +1,67 @@
+# THE STANDALONE SYNC HOST, deployed with kamal. Its own service, image and proxy hostnames -- it
+# shares the Unraid box with the maker app's three backends, which is fine: kamal-proxy routes by
+# Host header, so several services coexist on port 80.
+#
+# NOT DEPLOYED YET as of 2026-08-23. This file and the Dockerfile beside it were written and the
+# IMAGE was built and exercised (a container serving /up 200, /v1/tree 401 unauthenticated, and
+# /v1/devices/whoami answering with a real minted token) -- but nothing has been pushed to a
+# registry or rolled onto a host. Treat `servers:` below as the operator's to confirm.
+service: tinkerex-sync
+image: chaim354/tinkerex-sync
+
+servers:
+  web:
+    - 192.168.1.95      # the same Unraid VM the maker app runs on; change if this moves
+
+proxy:
+  ssl: false
+  # BOTH SUFFIXES, matching the maker app's own deploy.yml: `.local` is mDNS on the LAN and `.home`
+  # is what resolves over Tailscale. A missing `.home` entry deploys perfectly green and then 404s
+  # for anyone off-LAN, which is exactly the failure that convention exists to prevent.
+  hosts:
+    - sync.tinkerex.local
+    - sync.tinkerex.home
+  app_port: 3000
+  healthcheck:
+    path: /up          # added in PR #2 -- this app had none, and an orchestrator probing a path
+    interval: 5        # got a 404 that reads as "broken" rather than "absent"
+
+registry:
+  server: ghcr.io
+  username: chaim354
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+  # NO BUILD SECRETS, DELIBERATELY, AND THE CONTRAST IS THE POINT: the maker app's builder needs
+  # TINKEREX_SYNC_DEPLOY_KEY because it consumes this engine as a PRIVATE git: gem. Here the engine
+  # IS the source being built, so there is no cross-repo credential in the build at all.
+
+env:
+  clear:
+    RAILS_ENV: production
+    RAILS_LOG_TO_STDOUT: "1"
+    # LOCAL CHUNK STORAGE BY DEFAULT so a first deployment works with nothing else standing.
+    # Switch to s3 with CHUNK_ENDPOINT/CHUNK_BUCKET/CHUNK_REGION/CHUNK_ACCESS_KEY_ID once there is
+    # a bucket -- and note the volume below stops being the thing that holds your bytes when you do.
+    STORAGE_BACKEND: local
+    # `async` is IN-PROCESS ONLY. One web container is fine; the moment there are two, devices
+    # attached to one never hear the other's broadcasts and nothing reports it (host/config/cable.yml).
+    CABLE_ADAPTER: async
+  secret:
+    - SECRET_KEY_BASE
+    - CHUNK_SECRET_ACCESS_KEY
+
+# THE VOLUME HOLDS THE LIBRARY, NOT A CACHE. With STORAGE_BACKEND=local it is both the SQLite
+# database AND every chunk byte -- losing it loses the files, so it must be a real device on the
+# array and not a plain-local docker volume. That distinction has its own guard in the maker app's
+# backup tooling (§14i: a missing volume is not an error to docker, it CREATES one on the VM's own
+# disk and everything looks healthy).
+volumes:
+  - "tinkerex_sync_storage:/rails/host/storage"
+
+aliases:
+  console: app exec --interactive --reuse "bin/rails console"
+  issue:   app exec --interactive --reuse "bin/rails sync:device:issue"
+  logs:    app logs -f

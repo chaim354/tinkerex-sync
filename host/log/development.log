@@ -1,0 +1,592 @@
+  [1m[35m (0.1ms)[0m  [1m[35mDROP TABLE IF EXISTS "changelog_entries"[0m
+  [1m[35m (0.6ms)[0m  [1m[35mCREATE TABLE "changelog_entries" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "node_id" varchar NOT NULL, "op" varchar NOT NULL, "seq" bigint NOT NULL, "user_id" integer NOT NULL, "version_id" varchar)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_changelog_entries_on_user_id_and_seq" ON "changelog_entries" ("user_id", "seq")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "chunks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "chunks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "chunk_hash" varchar NOT NULL, "created_at" datetime(6) NOT NULL, "refcount" integer DEFAULT 0 NOT NULL, "size" bigint DEFAULT 0 NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_chunks_on_user_id_and_chunk_hash" ON "chunks" ("user_id", "chunk_hash")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_chunks_on_user_id_and_refcount" ON "chunks" ("user_id", "refcount")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "conflicts"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "conflicts" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "current_version_id" varchar NOT NULL, "incoming_version_id" varchar NOT NULL, "node_id" varchar NOT NULL, "resolved_at" datetime(6), "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_conflicts_on_user_node_incoming" ON "conflicts" ("user_id", "node_id", "incoming_version_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_conflicts_on_user_id_and_resolved_at" ON "conflicts" ("user_id", "resolved_at")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "devices"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "devices" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "last_seen_at" datetime(6), "name" varchar DEFAULT 'device' NOT NULL, "token_digest" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_devices_on_token_digest" ON "devices" ("token_digest")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_devices_on_user_id" ON "devices" ("user_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "file_locks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "file_locks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint NOT NULL, "expires_at" datetime(6) NOT NULL, "node_id" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_file_locks_on_user_id_and_expires_at" ON "file_locks" ("user_id", "expires_at")[0m
+  [1m[35m (0.2ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_file_locks_on_user_id_and_node_id" ON "file_locks" ("user_id", "node_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "manifest_chunks"[0m
+  [1m[35m (0.1ms)[0m  [1m[35mCREATE TABLE "manifest_chunks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "chunk_hash" varchar NOT NULL, "length" bigint NOT NULL, "manifest_id" varchar NOT NULL, "offset" bigint NOT NULL, "seq" integer NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.1ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_manifest_chunks_on_user_id_and_manifest_id_and_seq" ON "manifest_chunks" ("user_id", "manifest_id", "seq")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "nodes"[0m
+  [1m[35m (0.1ms)[0m  [1m[35mCREATE TABLE "nodes" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "current_version_id" varchar, "deleted" boolean DEFAULT FALSE NOT NULL, "kind" varchar NOT NULL, "mode" integer, "mtime" bigint, "name" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_node_id" varchar, "symlink_target" blob, "updated_at" datetime(6) NOT NULL, "updated_seq" bigint DEFAULT 0 NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_nodes_on_user_id_and_node_id" ON "nodes" ("user_id", "node_id")[0m
+  [1m[35m (0.2ms)[0m  [1m[35mCREATE INDEX "index_nodes_on_user_id_and_parent_node_id" ON "nodes" ("user_id", "parent_node_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_nodes_on_user_id" ON "nodes" ("user_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "pending_commits"[0m
+  [1m[35m (0.1ms)[0m  [1m[35mCREATE TABLE "pending_commits" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "base_version_id" varchar, "commit_id" varchar NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint, "manifest_id" varchar NOT NULL, "manifest_json" text NOT NULL, "mode" integer, "mtime" bigint, "name" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_node_id" varchar, "size" bigint DEFAULT 0 NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_pending_commits_on_user_id_and_commit_id" ON "pending_commits" ("user_id", "commit_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "share_links"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "share_links" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "expires_at" datetime(6), "manifest_id" varchar NOT NULL, "node_id" varchar NOT NULL, "revoked_at" datetime(6), "token_digest" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL, "version_id" varchar NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_share_links_on_token_digest" ON "share_links" ("token_digest")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_share_links_on_user_id_and_version_id" ON "share_links" ("user_id", "version_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "users"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "users" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "email" varchar NOT NULL, "head_seq" bigint DEFAULT 0 NOT NULL, "updated_at" datetime(6) NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_users_on_email" ON "users" ("email")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE IF EXISTS "versions"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "versions" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint, "manifest_id" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_version_id" varchar, "pinned" boolean DEFAULT FALSE NOT NULL, "size" bigint DEFAULT 0 NOT NULL, "user_id" integer NOT NULL, "version_id" varchar NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_versions_on_user_id_and_node_id_and_id" ON "versions" ("user_id", "node_id", "id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_versions_on_user_id_and_version_id" ON "versions" ("user_id", "version_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.2ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "achangelog_entries" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "node_id" varchar NOT NULL, "op" varchar NOT NULL, "seq" bigint NOT NULL, "user_id" integer NOT NULL, "version_id" varchar)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_achangelog_entries_on_user_id_and_seq" ON "achangelog_entries" ("user_id", "seq")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "achangelog_entries" ("id","created_at","node_id","op","seq","user_id","version_id")
+                     SELECT "id","created_at","node_id","op","seq","user_id","version_id" FROM "changelog_entries"[0m
+  [1m[35m (0.1ms)[0m  [1m[35mDROP TABLE "changelog_entries"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "changelog_entries" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "node_id" varchar NOT NULL, "op" varchar NOT NULL, "seq" bigint NOT NULL, "user_id" integer NOT NULL, "version_id" varchar, CONSTRAINT "fk_rails_d3bc07051d"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_changelog_entries_on_user_id_and_seq" ON "changelog_entries" ("user_id", "seq")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "changelog_entries" ("id","created_at","node_id","op","seq","user_id","version_id")
+                     SELECT "id","created_at","node_id","op","seq","user_id","version_id" FROM "achangelog_entries"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "achangelog_entries"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "achunks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "chunk_hash" varchar NOT NULL, "created_at" datetime(6) NOT NULL, "refcount" integer DEFAULT 0 NOT NULL, "size" bigint DEFAULT 0 NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "tindex_achunks_on_user_id_and_refcount" ON "achunks" ("user_id", "refcount")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_achunks_on_user_id_and_chunk_hash" ON "achunks" ("user_id", "chunk_hash")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "achunks" ("id","chunk_hash","created_at","refcount","size","updated_at","user_id")
+                     SELECT "id","chunk_hash","created_at","refcount","size","updated_at","user_id" FROM "chunks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "chunks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "chunks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "chunk_hash" varchar NOT NULL, "created_at" datetime(6) NOT NULL, "refcount" integer DEFAULT 0 NOT NULL, "size" bigint DEFAULT 0 NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL, CONSTRAINT "fk_rails_4699b2a9c7"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_chunks_on_user_id_and_chunk_hash" ON "chunks" ("user_id", "chunk_hash")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_chunks_on_user_id_and_refcount" ON "chunks" ("user_id", "refcount")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "chunks" ("id","chunk_hash","created_at","refcount","size","updated_at","user_id")
+                     SELECT "id","chunk_hash","created_at","refcount","size","updated_at","user_id" FROM "achunks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "achunks"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "aconflicts" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "current_version_id" varchar NOT NULL, "incoming_version_id" varchar NOT NULL, "node_id" varchar NOT NULL, "resolved_at" datetime(6), "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "tindex_aconflicts_on_user_id_and_resolved_at" ON "aconflicts" ("user_id", "resolved_at")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_aconflicts_on_user_node_incoming" ON "aconflicts" ("user_id", "node_id", "incoming_version_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "aconflicts" ("id","created_at","current_version_id","incoming_version_id","node_id","resolved_at","updated_at","user_id")
+                     SELECT "id","created_at","current_version_id","incoming_version_id","node_id","resolved_at","updated_at","user_id" FROM "conflicts"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "conflicts"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "conflicts" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "current_version_id" varchar NOT NULL, "incoming_version_id" varchar NOT NULL, "node_id" varchar NOT NULL, "resolved_at" datetime(6), "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL, CONSTRAINT "fk_rails_06b72a4f99"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_conflicts_on_user_node_incoming" ON "conflicts" ("user_id", "node_id", "incoming_version_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_conflicts_on_user_id_and_resolved_at" ON "conflicts" ("user_id", "resolved_at")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "conflicts" ("id","created_at","current_version_id","incoming_version_id","node_id","resolved_at","updated_at","user_id")
+                     SELECT "id","created_at","current_version_id","incoming_version_id","node_id","resolved_at","updated_at","user_id" FROM "aconflicts"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "aconflicts"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "adevices" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "last_seen_at" datetime(6), "name" varchar DEFAULT 'device' NOT NULL, "token_digest" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "tindex_adevices_on_user_id" ON "adevices" ("user_id")[0m
+  [1m[35m (0.2ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_adevices_on_token_digest" ON "adevices" ("token_digest")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "adevices" ("id","created_at","last_seen_at","name","token_digest","updated_at","user_id")
+                     SELECT "id","created_at","last_seen_at","name","token_digest","updated_at","user_id" FROM "devices"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "devices"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "devices" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "last_seen_at" datetime(6), "name" varchar DEFAULT 'device' NOT NULL, "token_digest" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL, CONSTRAINT "fk_rails_410b63ef65"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_devices_on_token_digest" ON "devices" ("token_digest")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_devices_on_user_id" ON "devices" ("user_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "devices" ("id","created_at","last_seen_at","name","token_digest","updated_at","user_id")
+                     SELECT "id","created_at","last_seen_at","name","token_digest","updated_at","user_id" FROM "adevices"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "adevices"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "afile_locks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint NOT NULL, "expires_at" datetime(6) NOT NULL, "node_id" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_afile_locks_on_user_id_and_node_id" ON "afile_locks" ("user_id", "node_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "tindex_afile_locks_on_user_id_and_expires_at" ON "afile_locks" ("user_id", "expires_at")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "afile_locks" ("id","created_at","device_id","expires_at","node_id","updated_at","user_id")
+                     SELECT "id","created_at","device_id","expires_at","node_id","updated_at","user_id" FROM "file_locks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "file_locks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "file_locks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint NOT NULL, "expires_at" datetime(6) NOT NULL, "node_id" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL, CONSTRAINT "fk_rails_cdf2ba9cec"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_file_locks_on_user_id_and_expires_at" ON "file_locks" ("user_id", "expires_at")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_file_locks_on_user_id_and_node_id" ON "file_locks" ("user_id", "node_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "file_locks" ("id","created_at","device_id","expires_at","node_id","updated_at","user_id")
+                     SELECT "id","created_at","device_id","expires_at","node_id","updated_at","user_id" FROM "afile_locks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "afile_locks"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "amanifest_chunks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "chunk_hash" varchar NOT NULL, "length" bigint NOT NULL, "manifest_id" varchar NOT NULL, "offset" bigint NOT NULL, "seq" integer NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_amanifest_chunks_on_user_id_and_manifest_id_and_seq" ON "amanifest_chunks" ("user_id", "manifest_id", "seq")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "amanifest_chunks" ("id","chunk_hash","length","manifest_id","offset","seq","user_id")
+                     SELECT "id","chunk_hash","length","manifest_id","offset","seq","user_id" FROM "manifest_chunks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "manifest_chunks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "manifest_chunks" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "chunk_hash" varchar NOT NULL, "length" bigint NOT NULL, "manifest_id" varchar NOT NULL, "offset" bigint NOT NULL, "seq" integer NOT NULL, "user_id" integer NOT NULL, CONSTRAINT "fk_rails_e0d78b394d"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_manifest_chunks_on_user_id_and_manifest_id_and_seq" ON "manifest_chunks" ("user_id", "manifest_id", "seq")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "manifest_chunks" ("id","chunk_hash","length","manifest_id","offset","seq","user_id")
+                     SELECT "id","chunk_hash","length","manifest_id","offset","seq","user_id" FROM "amanifest_chunks"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "amanifest_chunks"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "anodes" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "current_version_id" varchar, "deleted" boolean DEFAULT FALSE NOT NULL, "kind" varchar NOT NULL, "mode" integer, "mtime" bigint, "name" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_node_id" varchar, "symlink_target" blob, "updated_at" datetime(6) NOT NULL, "updated_seq" bigint DEFAULT 0 NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "tindex_anodes_on_user_id" ON "anodes" ("user_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "tindex_anodes_on_user_id_and_parent_node_id" ON "anodes" ("user_id", "parent_node_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_anodes_on_user_id_and_node_id" ON "anodes" ("user_id", "node_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "anodes" ("id","created_at","current_version_id","deleted","kind","mode","mtime","name","node_id","parent_node_id","symlink_target","updated_at","updated_seq","user_id")
+                     SELECT "id","created_at","current_version_id","deleted","kind","mode","mtime","name","node_id","parent_node_id","symlink_target","updated_at","updated_seq","user_id" FROM "nodes"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "nodes"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "nodes" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "current_version_id" varchar, "deleted" boolean DEFAULT FALSE NOT NULL, "kind" varchar NOT NULL, "mode" integer, "mtime" bigint, "name" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_node_id" varchar, "symlink_target" blob, "updated_at" datetime(6) NOT NULL, "updated_seq" bigint DEFAULT 0 NOT NULL, "user_id" integer NOT NULL, CONSTRAINT "fk_rails_3ceff5c266"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_nodes_on_user_id_and_node_id" ON "nodes" ("user_id", "node_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_nodes_on_user_id_and_parent_node_id" ON "nodes" ("user_id", "parent_node_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_nodes_on_user_id" ON "nodes" ("user_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "nodes" ("id","created_at","current_version_id","deleted","kind","mode","mtime","name","node_id","parent_node_id","symlink_target","updated_at","updated_seq","user_id")
+                     SELECT "id","created_at","current_version_id","deleted","kind","mode","mtime","name","node_id","parent_node_id","symlink_target","updated_at","updated_seq","user_id" FROM "anodes"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "anodes"[0m
+  [1m[36mTRANSACTION (0.1ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "apending_commits" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "base_version_id" varchar, "commit_id" varchar NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint, "manifest_id" varchar NOT NULL, "manifest_json" text NOT NULL, "mode" integer, "mtime" bigint, "name" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_node_id" varchar, "size" bigint DEFAULT 0 NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_apending_commits_on_user_id_and_commit_id" ON "apending_commits" ("user_id", "commit_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "apending_commits" ("id","base_version_id","commit_id","created_at","device_id","manifest_id","manifest_json","mode","mtime","name","node_id","parent_node_id","size","updated_at","user_id")
+                     SELECT "id","base_version_id","commit_id","created_at","device_id","manifest_id","manifest_json","mode","mtime","name","node_id","parent_node_id","size","updated_at","user_id" FROM "pending_commits"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "pending_commits"[0m
+  [1m[35m (0.1ms)[0m  [1m[35mCREATE TABLE "pending_commits" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "base_version_id" varchar, "commit_id" varchar NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint, "manifest_id" varchar NOT NULL, "manifest_json" text NOT NULL, "mode" integer, "mtime" bigint, "name" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_node_id" varchar, "size" bigint DEFAULT 0 NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL, CONSTRAINT "fk_rails_1e53072fb6"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_pending_commits_on_user_id_and_commit_id" ON "pending_commits" ("user_id", "commit_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "pending_commits" ("id","base_version_id","commit_id","created_at","device_id","manifest_id","manifest_json","mode","mtime","name","node_id","parent_node_id","size","updated_at","user_id")
+                     SELECT "id","base_version_id","commit_id","created_at","device_id","manifest_id","manifest_json","mode","mtime","name","node_id","parent_node_id","size","updated_at","user_id" FROM "apending_commits"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "apending_commits"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "ashare_links" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "expires_at" datetime(6), "manifest_id" varchar NOT NULL, "node_id" varchar NOT NULL, "revoked_at" datetime(6), "token_digest" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL, "version_id" varchar NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "tindex_ashare_links_on_user_id_and_version_id" ON "ashare_links" ("user_id", "version_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_ashare_links_on_token_digest" ON "ashare_links" ("token_digest")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "ashare_links" ("id","created_at","expires_at","manifest_id","node_id","revoked_at","token_digest","updated_at","user_id","version_id")
+                     SELECT "id","created_at","expires_at","manifest_id","node_id","revoked_at","token_digest","updated_at","user_id","version_id" FROM "share_links"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "share_links"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "share_links" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "expires_at" datetime(6), "manifest_id" varchar NOT NULL, "node_id" varchar NOT NULL, "revoked_at" datetime(6), "token_digest" varchar NOT NULL, "updated_at" datetime(6) NOT NULL, "user_id" integer NOT NULL, "version_id" varchar NOT NULL, CONSTRAINT "fk_rails_8d57437e3a"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_share_links_on_token_digest" ON "share_links" ("token_digest")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_share_links_on_user_id_and_version_id" ON "share_links" ("user_id", "version_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "share_links" ("id","created_at","expires_at","manifest_id","node_id","revoked_at","token_digest","updated_at","user_id","version_id")
+                     SELECT "id","created_at","expires_at","manifest_id","node_id","revoked_at","token_digest","updated_at","user_id","version_id" FROM "ashare_links"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "ashare_links"[0m
+  [1m[36mTRANSACTION (0.1ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = ON[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = OFF[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TEMPORARY TABLE "aversions" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint, "manifest_id" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_version_id" varchar, "pinned" boolean DEFAULT FALSE NOT NULL, "size" bigint DEFAULT 0 NOT NULL, "user_id" integer NOT NULL, "version_id" varchar NOT NULL)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "tindex_aversions_on_user_id_and_version_id" ON "aversions" ("user_id", "version_id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "tindex_aversions_on_user_id_and_node_id_and_id" ON "aversions" ("user_id", "node_id", "id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "aversions" ("id","created_at","device_id","manifest_id","node_id","parent_version_id","pinned","size","user_id","version_id")
+                     SELECT "id","created_at","device_id","manifest_id","node_id","parent_version_id","pinned","size","user_id","version_id" FROM "versions"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "versions"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "versions" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "created_at" datetime(6) NOT NULL, "device_id" bigint, "manifest_id" varchar NOT NULL, "node_id" varchar NOT NULL, "parent_version_id" varchar, "pinned" boolean DEFAULT FALSE NOT NULL, "size" bigint DEFAULT 0 NOT NULL, "user_id" integer NOT NULL, "version_id" varchar NOT NULL, CONSTRAINT "fk_rails_914f13c63b"
+FOREIGN KEY ("user_id")
+  REFERENCES "users" ("id")
+)[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE INDEX "index_versions_on_user_id_and_node_id_and_id" ON "versions" ("user_id", "node_id", "id")[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE UNIQUE INDEX "index_versions_on_user_id_and_version_id" ON "versions" ("user_id", "version_id")[0m
+  [1m[35mSQL (0.0ms)[0m  [1m[32mINSERT INTO "versions" ("id","created_at","device_id","manifest_id","node_id","parent_version_id","pinned","size","user_id","version_id")
+                     SELECT "id","created_at","device_id","manifest_id","node_id","parent_version_id","pinned","size","user_id","version_id" FROM "aversions"[0m
+  [1m[35m (0.0ms)[0m  [1m[35mDROP TABLE "aversions"[0m
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA defer_foreign_keys = 0[0m
+  [1m[35m (0.0ms)[0m  [1m[35mPRAGMA foreign_keys = 1[0m
+  [1m[35m (0.1ms)[0m  [1m[35mCREATE TABLE "schema_migrations" ("version" varchar NOT NULL PRIMARY KEY)[0m
+  [1m[36mActiveRecord::SchemaMigration Load (0.0ms)[0m  [1m[34mSELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC[0m
+  [1m[35m (0.0ms)[0m  [1m[32mINSERT INTO "schema_migrations" (version) VALUES (20260101000002)[0m
+  [1m[35m (0.0ms)[0m  [1m[32mINSERT INTO "schema_migrations" (version) VALUES
+(20260101000001);[0m
+  [1m[35m (0.0ms)[0m  [1m[35mCREATE TABLE "ar_internal_metadata" ("key" varchar NOT NULL PRIMARY KEY, "value" varchar, "created_at" datetime(6) NOT NULL, "updated_at" datetime(6) NOT NULL)[0m
+  [1m[36mActiveRecord::InternalMetadata Load (0.0ms)[0m  [1m[34mSELECT * FROM "ar_internal_metadata" WHERE "ar_internal_metadata"."key" = ? ORDER BY "ar_internal_metadata"."key" ASC LIMIT 1[0m  [[nil, "environment"]]
+  [1m[36mActiveRecord::InternalMetadata Create (0.0ms)[0m  [1m[32mINSERT INTO "ar_internal_metadata" ("key", "value", "created_at", "updated_at") VALUES ('environment', 'development', '2026-08-23 03:06:57.246770', '2026-08-23 03:06:57.246771') RETURNING "key"[0m
+  [1m[36mActiveRecord::InternalMetadata Load (0.0ms)[0m  [1m[34mSELECT * FROM "ar_internal_metadata" WHERE "ar_internal_metadata"."key" = ? ORDER BY "ar_internal_metadata"."key" ASC LIMIT 1[0m  [[nil, "environment"]]
+  [1m[36mActiveRecord::InternalMetadata Load (0.0ms)[0m  [1m[34mSELECT * FROM "ar_internal_metadata" WHERE "ar_internal_metadata"."key" = ? ORDER BY "ar_internal_metadata"."key" ASC LIMIT 1[0m  [[nil, "schema_sha1"]]
+  [1m[36mActiveRecord::InternalMetadata Create (0.0ms)[0m  [1m[32mINSERT INTO "ar_internal_metadata" ("key", "value", "created_at", "updated_at") VALUES ('schema_sha1', '6dfa4503bec5b6521cffadb6fc75dca91ada2c68', '2026-08-23 03:06:57.247401', '2026-08-23 03:06:57.247401') RETURNING "key"[0m
+  [1m[36mActiveRecord::SchemaMigration Load (0.0ms)[0m  [1m[34mSELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC[0m
+  [1m[36mActiveRecord::SchemaMigration Load (0.2ms)[0m  [1m[34mSELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC[0m
+  [1m[36mUser Load (0.1ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."email" = ? LIMIT ?[0m  [["email", "maker@tinkerex.local"], ["LIMIT", 1]]
+  ↳ lib/tasks/devices.rake:14:in 'block (3 levels) in <top (required)>'
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  ↳ lib/tasks/devices.rake:14:in 'block (3 levels) in <top (required)>'
+  [1m[36mUser Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "users" WHERE "users"."email" = ? LIMIT ?[0m  [["email", "maker@tinkerex.local"], ["LIMIT", 1]]
+  ↳ lib/tasks/devices.rake:14:in 'block (3 levels) in <top (required)>'
+  [1m[36mUser Create (0.1ms)[0m  [1m[32mINSERT INTO "users" ("created_at", "email", "head_seq", "updated_at") VALUES (?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:06:57.723131"], ["email", "maker@tinkerex.local"], ["head_seq", 0], ["updated_at", "2026-08-23 03:06:57.723131"]]
+  ↳ lib/tasks/devices.rake:14:in 'block (3 levels) in <top (required)>'
+  [1m[36mTRANSACTION (0.2ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  ↳ lib/tasks/devices.rake:14:in 'block (3 levels) in <top (required)>'
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  ↳ app/models/device.rb:17:in 'Device.register!'
+  [1m[36mDevice Exists? (0.8ms)[0m  [1m[34mSELECT 1 AS one FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:17:in 'Device.register!'
+  [1m[36mDevice Create (0.1ms)[0m  [1m[32mINSERT INTO "devices" ("created_at", "last_seen_at", "name", "token_digest", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:06:57.735730"], ["last_seen_at", nil], ["name", "maker-app"], ["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["updated_at", "2026-08-23 03:06:57.735730"], ["user_id", 1]]
+  ↳ app/models/device.rb:17:in 'Device.register!'
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  ↳ app/models/device.rb:17:in 'Device.register!'
+Started GET "/up" for 127.0.0.1 at 2026-08-22 23:08:43 -0400
+  [1m[36mActiveRecord::SchemaMigration Load (0.2ms)[0m  [1m[34mSELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC[0m
+  
+ActionController::RoutingError (No route matches [GET] "/up"):
+  
+Started GET "/v1/devices/whoami" for 127.0.0.1 at 2026-08-22 23:08:43 -0400
+Processing by V1::DevicesController#whoami as */*
+  [1m[36mDevice Load (0.2ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.2ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.2ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:08:43.976483"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+Completed 200 OK in 22ms (Views: 0.1ms | ActiveRecord: 1.4ms (3 queries, 0 cached) | GC: 0.1ms)
+
+
+Started GET "/v1/tree" for 127.0.0.1 at 2026-08-22 23:08:43 -0400
+Processing by Sync::V1::TreeController#index as */*
+  [1m[36mDevice Load (0.1ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "ca3704aa0b06f5954c79ee837faa152d84d6b2d42838f0637a15eda8337dbdce"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+Filter chain halted as :authenticate_device! rendered or redirected
+Completed 401 Unauthorized in 0ms (Views: 0.0ms | ActiveRecord: 0.1ms (1 query, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/tree" for 127.0.0.1 at 2026-08-22 23:08:43 -0400
+Processing by Sync::V1::TreeController#index as */*
+Filter chain halted as :authenticate_device! rendered or redirected
+Completed 401 Unauthorized in 0ms (Views: 0.0ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/changes?since=0&limit=1" for 127.0.0.1 at 2026-08-22 23:09:05 -0400
+Processing by Sync::V1::ChangesController#index as JSON
+  Parameters: {"since" => "0", "limit" => "1"}
+  [1m[36mDevice Load (0.1ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.1ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:05.418086"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 1], [nil, 0], ["LIMIT", 1]]
+  [1m[36mSync::ChangelogEntry Minimum (0.2ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+Completed 200 OK in 6ms (Views: 0.0ms | ActiveRecord: 0.5ms (5 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/changes?since=0&limit=500" for 127.0.0.1 at 2026-08-22 23:09:05 -0400
+Processing by Sync::V1::ChangesController#index as JSON
+  Parameters: {"since" => "0", "limit" => "500"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.1ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:05.425656"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 1], [nil, 0], ["LIMIT", 500]]
+  [1m[36mSync::ChangelogEntry Minimum (0.0ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+Completed 200 OK in 2ms (Views: 0.0ms | ActiveRecord: 0.1ms (5 queries, 0 cached) | GC: 0.0ms)
+
+
+Started POST "/v1/commit" for 127.0.0.1 at 2026-08-22 23:09:19 -0400
+Processing by Sync::V1::CommitsController#create as JSON
+  Parameters: {"commit_id" => "75adb2f7-36d8-400b-b762-9deb4b1baa1f", "node_id" => "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f", "parent_node_id" => nil, "name" => "proof.stl", "base_version_id" => nil, "size" => 75, "mtime" => 1787454559627426048, "mode" => nil, "manifest" => [{"hash" => "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888", "offset" => 0, "length" => 75}], "commit" => {"commit_id" => "75adb2f7-36d8-400b-b762-9deb4b1baa1f", "node_id" => "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f", "parent_node_id" => nil, "name" => "proof.stl", "base_version_id" => nil, "size" => 75, "mtime" => 1787454559627426048, "mode" => nil, "manifest" => [{"hash" => "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888", "offset" => 0, "length" => 75}]}}
+  [1m[36mDevice Load (0.1ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.2ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:19.632526"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+[31mUnpermitted parameter: :commit. Context: { controller: Sync::V1::CommitsController, action: create, request: #<ActionDispatch::Request:0x00000001273bd170>, params: {"commit_id" => "75adb2f7-36d8-400b-b762-9deb4b1baa1f", "node_id" => "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f", "parent_node_id" => nil, "name" => "proof.stl", "base_version_id" => nil, "size" => 75, "mtime" => 1787454559627426048, "mode" => nil, "manifest" => [{"hash" => "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888", "offset" => 0, "length" => 75}], "controller" => "sync/v1/commits", "action" => "create", "commit" => {"commit_id" => "75adb2f7-36d8-400b-b762-9deb4b1baa1f", "node_id" => "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f", "parent_node_id" => nil, "name" => "proof.stl", "base_version_id" => nil, "size" => 75, "mtime" => 1787454559627426048, "mode" => nil, "manifest" => [{"hash" => "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888", "offset" => 0, "length" => 75}]}} }[0m
+  [1m[36mSync::PendingCommit Load (0.2ms)[0m  [1m[34mSELECT "pending_commits".* FROM "pending_commits" WHERE "pending_commits"."user_id" = ? AND "pending_commits"."commit_id" = ? LIMIT ?[0m  [["user_id", 1], ["commit_id", "75adb2f7-36d8-400b-b762-9deb4b1baa1f"], ["LIMIT", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  [1m[36mSync::PendingCommit Exists? (0.4ms)[0m  [1m[34mSELECT 1 AS one FROM "pending_commits" WHERE "pending_commits"."commit_id" = ? AND "pending_commits"."user_id" = ? LIMIT ?[0m  [["commit_id", "75adb2f7-36d8-400b-b762-9deb4b1baa1f"], ["user_id", 1], ["LIMIT", 1]]
+  [1m[36mSync::PendingCommit Create (0.1ms)[0m  [1m[32mINSERT INTO "pending_commits" ("base_version_id", "commit_id", "created_at", "device_id", "manifest_id", "manifest_json", "mode", "mtime", "name", "node_id", "parent_node_id", "size", "updated_at", "user_id") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["base_version_id", nil], ["commit_id", "75adb2f7-36d8-400b-b762-9deb4b1baa1f"], ["created_at", "2026-08-23 03:09:19.638317"], ["device_id", 1], ["manifest_id", "9126f555db6cf345ec876b86c6de733fec0654d22fd8a7a87878706166292d7b"], ["manifest_json", "[{\"hash\":\"a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888\",\"offset\":0,\"length\":75}]"], ["mode", nil], ["mtime", 1787454559627426048], ["name", "proof.stl"], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["parent_node_id", nil], ["size", 75], ["updated_at", "2026-08-23 03:09:19.638317"], ["user_id", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+  [1m[36mSync::Chunk Pluck (0.2ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 1], ["chunk_hash", "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"]]
+Completed 200 OK in 9ms (Views: 0.0ms | ActiveRecord: 1.3ms (7 queries, 0 cached) | GC: 0.0ms)
+
+
+Started PUT "/v1/chunks/blob/1/a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888?exp=1787455459&sig=d8acab130196bb05265c6c752eb839dd31e9a20a47ebb375155d979a744ae0dc" for 127.0.0.1 at 2026-08-22 23:09:19 -0400
+Processing by Sync::V1::Chunks::BlobController#upload as */*
+  Parameters: {"exp" => "1787455459", "sig" => "d8acab130196bb05265c6c752eb839dd31e9a20a47ebb375155d979a744ae0dc", "user_id" => "1", "hash" => "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"}
+Completed 200 OK in 0ms (ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+
+
+Started POST "/v1/commit/75adb2f7-36d8-400b-b762-9deb4b1baa1f/finalize" for 127.0.0.1 at 2026-08-22 23:09:19 -0400
+Processing by Sync::V1::CommitsController#finalize as JSON
+  Parameters: {"verify" => true, "commit_id" => "75adb2f7-36d8-400b-b762-9deb4b1baa1f", "commit" => {"verify" => true}}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:19.646848"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::PendingCommit Load (0.0ms)[0m  [1m[34mSELECT "pending_commits".* FROM "pending_commits" WHERE "pending_commits"."user_id" = ? AND "pending_commits"."commit_id" = ? LIMIT ?[0m  [["user_id", 1], ["commit_id", "75adb2f7-36d8-400b-b762-9deb4b1baa1f"], ["LIMIT", 1]]
+  [1m[36mSync::Chunk Pluck (0.0ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 1], ["chunk_hash", "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  ↳ app/models/user.rb:47:in 'User#next_seq!'
+  [1m[36mUser Load (0.2ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ? [0m  [["id", 1], ["LIMIT", 1]]
+  ↳ app/models/user.rb:47:in 'User#next_seq!'
+  [1m[36mUser Update (0.0ms)[0m  [1m[33mUPDATE "users" SET "head_seq" = ? WHERE "users"."id" = ?[0m  [["head_seq", 1], ["id", 1]]
+  ↳ app/models/user.rb:49:in 'User#next_seq!'
+  [1m[36mSync::ManifestChunk Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "manifest_chunks" WHERE "manifest_chunks"."user_id" = ? AND "manifest_chunks"."manifest_id" = ? LIMIT ?[0m  [["user_id", 1], ["manifest_id", "9126f555db6cf345ec876b86c6de733fec0654d22fd8a7a87878706166292d7b"], ["LIMIT", 1]]
+  [1m[36mSync::ManifestChunk Insert (0.0ms)[0m  [1m[32mINSERT INTO "manifest_chunks" ("user_id","manifest_id","seq","chunk_hash","offset","length") VALUES (1, '9126f555db6cf345ec876b86c6de733fec0654d22fd8a7a87878706166292d7b', 0, 'a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888', 0, 75) ON CONFLICT  DO NOTHING RETURNING "id"[0m
+  [1m[36mSync::Chunk Pluck (0.0ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 1], ["chunk_hash", "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"]]
+  [1m[36mSync::Chunk Insert (0.0ms)[0m  [1m[32mINSERT INTO "chunks" ("user_id","chunk_hash","size","refcount","created_at","updated_at") VALUES (1, 'a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888', 75, 1, '2026-08-23 03:09:19.650412', '2026-08-23 03:09:19.650412') ON CONFLICT  DO NOTHING RETURNING "id"[0m
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ? LIMIT ?[0m  [["user_id", 1], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["LIMIT", 1]]
+  [1m[36mSync::Version Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "versions" WHERE "versions"."version_id" = ? AND "versions"."user_id" = ? LIMIT ?[0m  [["version_id", "ed17523e-3011-4125-ab40-1c133192cc40"], ["user_id", 1], ["LIMIT", 1]]
+  [1m[36mSync::Version Create (0.0ms)[0m  [1m[32mINSERT INTO "versions" ("created_at", "device_id", "manifest_id", "node_id", "parent_version_id", "pinned", "size", "user_id", "version_id") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:09:19.654146"], ["device_id", 1], ["manifest_id", "9126f555db6cf345ec876b86c6de733fec0654d22fd8a7a87878706166292d7b"], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["parent_version_id", nil], ["pinned", 0], ["size", 75], ["user_id", 1], ["version_id", "ed17523e-3011-4125-ab40-1c133192cc40"]]
+  [1m[36mNode Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "nodes" WHERE "nodes"."node_id" = ? AND "nodes"."user_id" = ? LIMIT ?[0m  [["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["user_id", 1], ["LIMIT", 1]]
+  [1m[36mNode Create (0.0ms)[0m  [1m[32mINSERT INTO "nodes" ("created_at", "current_version_id", "deleted", "kind", "mode", "mtime", "name", "node_id", "parent_node_id", "symlink_target", "updated_at", "updated_seq", "user_id") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:09:19.656599"], ["current_version_id", "ed17523e-3011-4125-ab40-1c133192cc40"], ["deleted", 0], ["kind", "file"], ["mode", 420], ["mtime", 1787454559627426048], ["name", "proof.stl"], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["parent_node_id", nil], ["symlink_target", nil], ["updated_at", "2026-08-23 03:09:19.656599"], ["updated_seq", 1], ["user_id", 1]]
+  [1m[36mSync::ChangelogEntry Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "changelog_entries" WHERE "changelog_entries"."seq" = ? AND "changelog_entries"."user_id" = ? LIMIT ?[0m  [["seq", 1], ["user_id", 1], ["LIMIT", 1]]
+  [1m[36mSync::ChangelogEntry Create (0.0ms)[0m  [1m[32mINSERT INTO "changelog_entries" ("created_at", "node_id", "op", "seq", "user_id", "version_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:09:19.657020"], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["op", "put"], ["seq", 1], ["user_id", 1], ["version_id", "ed17523e-3011-4125-ab40-1c133192cc40"]]
+  [1m[36mSync::PendingCommit Destroy (0.0ms)[0m  [1m[31mDELETE FROM "pending_commits" WHERE "pending_commits"."id" = ?[0m  [["id", 1]]
+  [1m[36mTRANSACTION (0.1ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+[ActionCable] Broadcasting to sync:library:Z2lkOi8vc3luYy1ob3N0L1VzZXIvMQ: {head_seq: 1}
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ? LIMIT ?[0m  [["user_id", 1], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["LIMIT", 1]]
+Completed 200 OK in 16ms (Views: 0.0ms | ActiveRecord: 1.1ms (20 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/changes?since=0&limit=1" for 127.0.0.1 at 2026-08-22 23:09:19 -0400
+Processing by Sync::V1::ChangesController#index as JSON
+  Parameters: {"since" => "0", "limit" => "1"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:19.665360"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 1], [nil, 0], ["LIMIT", 1]]
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ?[0m  [["user_id", 1], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"]]
+  [1m[36mSync::Version Load (0.0ms)[0m  [1m[34mSELECT "versions".* FROM "versions" WHERE "versions"."user_id" = ? AND "versions"."version_id" = ?[0m  [["user_id", 1], ["version_id", "ed17523e-3011-4125-ab40-1c133192cc40"]]
+  [1m[36mSync::ManifestChunk Pluck (0.0ms)[0m  [1m[34mSELECT "manifest_chunks"."manifest_id", "manifest_chunks"."chunk_hash", "manifest_chunks"."offset", "manifest_chunks"."length" FROM "manifest_chunks" WHERE "manifest_chunks"."user_id" = ? AND "manifest_chunks"."manifest_id" = ? ORDER BY "manifest_chunks"."manifest_id" ASC, "manifest_chunks"."seq" ASC[0m  [["user_id", 1], ["manifest_id", "9126f555db6cf345ec876b86c6de733fec0654d22fd8a7a87878706166292d7b"]]
+  [1m[36mSync::ChangelogEntry Minimum (0.1ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+Completed 200 OK in 3ms (Views: 0.0ms | ActiveRecord: 0.3ms (8 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/changes?since=0&limit=500" for 127.0.0.1 at 2026-08-22 23:09:19 -0400
+Processing by Sync::V1::ChangesController#index as JSON
+  Parameters: {"since" => "0", "limit" => "500"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:19.670040"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 1], [nil, 0], ["LIMIT", 500]]
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ?[0m  [["user_id", 1], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"]]
+  [1m[36mSync::Version Load (0.0ms)[0m  [1m[34mSELECT "versions".* FROM "versions" WHERE "versions"."user_id" = ? AND "versions"."version_id" = ?[0m  [["user_id", 1], ["version_id", "ed17523e-3011-4125-ab40-1c133192cc40"]]
+  [1m[36mSync::ManifestChunk Pluck (0.0ms)[0m  [1m[34mSELECT "manifest_chunks"."manifest_id", "manifest_chunks"."chunk_hash", "manifest_chunks"."offset", "manifest_chunks"."length" FROM "manifest_chunks" WHERE "manifest_chunks"."user_id" = ? AND "manifest_chunks"."manifest_id" = ? ORDER BY "manifest_chunks"."manifest_id" ASC, "manifest_chunks"."seq" ASC[0m  [["user_id", 1], ["manifest_id", "9126f555db6cf345ec876b86c6de733fec0654d22fd8a7a87878706166292d7b"]]
+  [1m[36mSync::ChangelogEntry Minimum (0.0ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+Completed 200 OK in 8ms (Views: 0.0ms | ActiveRecord: 0.2ms (8 queries, 0 cached) | GC: 5.6ms)
+
+
+Started POST "/v1/chunks/download" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::ChunksController#download as JSON
+  Parameters: {"hashes" => ["a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"], "chunk" => {}}
+  [1m[36mDevice Load (0.1ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:30.047838"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::Chunk Pluck (0.0ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 1], ["chunk_hash", "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"]]
+Completed 200 OK in 2ms (Views: 0.0ms | ActiveRecord: 0.1ms (4 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/chunks/blob/1/a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888?exp=1787458170&sig=35704bf64b454a68a8d63f9f7cff689b5be180e1430113853a0652d94cf4d9eb" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::Chunks::BlobController#download as */*
+  Parameters: {"exp" => "1787458170", "sig" => "35704bf64b454a68a8d63f9f7cff689b5be180e1430113853a0652d94cf4d9eb", "user_id" => "1", "hash" => "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"}
+Sent data  (0.1ms)
+Completed 200 OK in 0ms (Views: 0.0ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+
+
+Started POST "/v1/chunks/download" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::ChunksController#download as JSON
+  Parameters: {"hashes" => ["a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"], "chunk" => {}}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:30.054095"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::Chunk Pluck (0.0ms)[0m  [1m[34mSELECT "chunks"."chunk_hash" FROM "chunks" WHERE "chunks"."user_id" = ? AND "chunks"."chunk_hash" = ?[0m  [["user_id", 1], ["chunk_hash", "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"]]
+Completed 200 OK in 1ms (Views: 0.0ms | ActiveRecord: 0.1ms (4 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/chunks/blob/1/a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888?exp=1787458170&sig=35704bf64b454a68a8d63f9f7cff689b5be180e1430113853a0652d94cf4d9eb" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::Chunks::BlobController#download as */*
+  Parameters: {"exp" => "1787458170", "sig" => "35704bf64b454a68a8d63f9f7cff689b5be180e1430113853a0652d94cf4d9eb", "user_id" => "1", "hash" => "a1c8509fda632ff87ac9cd60656a7010725ee4f74073ef94021926be0f6c8888"}
+Sent data  (0.0ms)
+Completed 200 OK in 0ms (Views: 0.0ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+
+
+Started POST "/v1/nodes" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::NodesController#mkdir as JSON
+  Parameters: {"node_id" => "33182cd7-32dc-4f75-92d0-7686399580ca", "parent_node_id" => nil, "name" => "Remote Folder", "mode" => 493, "mtime" => 1787454570057569024, "node" => {"mode" => 493, "mtime" => 1787454570057569024, "name" => "Remote Folder", "node_id" => "33182cd7-32dc-4f75-92d0-7686399580ca", "parent_node_id" => nil}}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:30.060794"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ? LIMIT ?[0m  [["user_id", 1], ["node_id", "33182cd7-32dc-4f75-92d0-7686399580ca"], ["LIMIT", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  ↳ app/models/user.rb:47:in 'User#next_seq!'
+  [1m[36mUser Load (0.2ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ? [0m  [["id", 1], ["LIMIT", 1]]
+  ↳ app/models/user.rb:47:in 'User#next_seq!'
+  [1m[36mUser Update (0.0ms)[0m  [1m[33mUPDATE "users" SET "head_seq" = ? WHERE "users"."id" = ?[0m  [["head_seq", 2], ["id", 1]]
+  ↳ app/models/user.rb:49:in 'User#next_seq!'
+  [1m[36mNode Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "nodes" WHERE "nodes"."node_id" = ? AND "nodes"."user_id" = ? LIMIT ?[0m  [["node_id", "33182cd7-32dc-4f75-92d0-7686399580ca"], ["user_id", 1], ["LIMIT", 1]]
+  [1m[36mNode Create (0.0ms)[0m  [1m[32mINSERT INTO "nodes" ("created_at", "current_version_id", "deleted", "kind", "mode", "mtime", "name", "node_id", "parent_node_id", "symlink_target", "updated_at", "updated_seq", "user_id") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:09:30.063130"], ["current_version_id", nil], ["deleted", 0], ["kind", "dir"], ["mode", 493], ["mtime", 1787454570057569024], ["name", "Remote Folder"], ["node_id", "33182cd7-32dc-4f75-92d0-7686399580ca"], ["parent_node_id", nil], ["symlink_target", nil], ["updated_at", "2026-08-23 03:09:30.063130"], ["updated_seq", 2], ["user_id", 1]]
+  [1m[36mSync::ChangelogEntry Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "changelog_entries" WHERE "changelog_entries"."seq" = ? AND "changelog_entries"."user_id" = ? LIMIT ?[0m  [["seq", 2], ["user_id", 1], ["LIMIT", 1]]
+  [1m[36mSync::ChangelogEntry Create (0.0ms)[0m  [1m[32mINSERT INTO "changelog_entries" ("created_at", "node_id", "op", "seq", "user_id", "version_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:09:30.063596"], ["node_id", "33182cd7-32dc-4f75-92d0-7686399580ca"], ["op", "mkdir"], ["seq", 2], ["user_id", 1], ["version_id", nil]]
+  [1m[36mTRANSACTION (0.1ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+[ActionCable] Broadcasting to sync:library:Z2lkOi8vc3luYy1ob3N0L1VzZXIvMQ: {head_seq: 2}
+Completed 201 Created in 5ms (Views: 0.0ms | ActiveRecord: 0.5ms (10 queries, 0 cached) | GC: 0.2ms)
+
+
+Started GET "/v1/changes?since=1&limit=1" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::ChangesController#index as JSON
+  Parameters: {"since" => "1", "limit" => "1"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:30.068291"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 1], [nil, 1], ["LIMIT", 1]]
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ?[0m  [["user_id", 1], ["node_id", "33182cd7-32dc-4f75-92d0-7686399580ca"]]
+  [1m[36mSync::ChangelogEntry Minimum (0.0ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+Completed 200 OK in 2ms (Views: 0.0ms | ActiveRecord: 0.1ms (6 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/changes?since=1&limit=500" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::ChangesController#index as JSON
+  Parameters: {"since" => "1", "limit" => "500"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:30.071888"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 1], [nil, 1], ["LIMIT", 500]]
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ?[0m  [["user_id", 1], ["node_id", "33182cd7-32dc-4f75-92d0-7686399580ca"]]
+  [1m[36mSync::ChangelogEntry Minimum (0.0ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+Completed 200 OK in 2ms (Views: 0.0ms | ActiveRecord: 0.1ms (6 queries, 0 cached) | GC: 0.1ms)
+
+
+Started POST "/v1/nodes/fddedd0f-fd1c-4b9a-a3ae-53f65880e78f/move" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::NodesController#move as JSON
+  Parameters: {"new_parent_node_id" => "33182cd7-32dc-4f75-92d0-7686399580ca", "new_name" => "moved.stl", "node_id" => "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f", "node" => {}}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.1ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:30.080672"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ? LIMIT ?[0m  [["user_id", 1], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["LIMIT", 1]]
+  [1m[36mNode Pluck (0.0ms)[0m  [1m[34mSELECT "nodes"."parent_node_id" FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ? LIMIT ?[0m  [["user_id", 1], ["node_id", "33182cd7-32dc-4f75-92d0-7686399580ca"], ["LIMIT", 1]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mBEGIN immediate TRANSACTION[0m
+  ↳ app/models/user.rb:47:in 'User#next_seq!'
+  [1m[36mUser Load (0.2ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ? [0m  [["id", 1], ["LIMIT", 1]]
+  ↳ app/models/user.rb:47:in 'User#next_seq!'
+  [1m[36mUser Update (0.0ms)[0m  [1m[33mUPDATE "users" SET "head_seq" = ? WHERE "users"."id" = ?[0m  [["head_seq", 3], ["id", 1]]
+  ↳ app/models/user.rb:49:in 'User#next_seq!'
+  [1m[36mNode Update (0.0ms)[0m  [1m[33mUPDATE "nodes" SET "name" = ?, "parent_node_id" = ?, "updated_at" = ?, "updated_seq" = ? WHERE "nodes"."id" = ?[0m  [["name", "moved.stl"], ["parent_node_id", "33182cd7-32dc-4f75-92d0-7686399580ca"], ["updated_at", "2026-08-23 03:09:30.082488"], ["updated_seq", 3], ["id", 1]]
+  [1m[36mSync::ChangelogEntry Exists? (0.0ms)[0m  [1m[34mSELECT 1 AS one FROM "changelog_entries" WHERE "changelog_entries"."seq" = ? AND "changelog_entries"."user_id" = ? LIMIT ?[0m  [["seq", 3], ["user_id", 1], ["LIMIT", 1]]
+  [1m[36mSync::ChangelogEntry Create (0.0ms)[0m  [1m[32mINSERT INTO "changelog_entries" ("created_at", "node_id", "op", "seq", "user_id", "version_id") VALUES (?, ?, ?, ?, ?, ?) RETURNING "id"[0m  [["created_at", "2026-08-23 03:09:30.082892"], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"], ["op", "move"], ["seq", 3], ["user_id", 1], ["version_id", nil]]
+  [1m[36mTRANSACTION (0.0ms)[0m  [1m[36mCOMMIT TRANSACTION[0m
+[ActionCable] Broadcasting to sync:library:Z2lkOi8vc3luYy1ob3N0L1VzZXIvMQ: {head_seq: 3}
+Completed 200 OK in 5ms (Views: 0.0ms | ActiveRecord: 0.6ms (10 queries, 0 cached) | GC: 0.4ms)
+
+
+Started GET "/v1/changes?since=2&limit=1" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::ChangesController#index as JSON
+  Parameters: {"since" => "2", "limit" => "1"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:30.086463"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 1], [nil, 2], ["LIMIT", 1]]
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ?[0m  [["user_id", 1], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"]]
+  [1m[36mSync::ChangelogEntry Minimum (0.0ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+Completed 200 OK in 2ms (Views: 0.0ms | ActiveRecord: 0.1ms (6 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/v1/changes?since=2&limit=500" for 127.0.0.1 at 2026-08-22 23:09:30 -0400
+Processing by Sync::V1::ChangesController#index as JSON
+  Parameters: {"since" => "2", "limit" => "500"}
+  [1m[36mDevice Load (0.0ms)[0m  [1m[34mSELECT "devices".* FROM "devices" WHERE "devices"."token_digest" = ? LIMIT ?[0m  [["token_digest", "703e70319dad90a5c2a8b3186b4de54868d0adc5ea197cc09d882251bc5016ed"], ["LIMIT", 1]]
+  ↳ app/models/device.rb:24:in 'Device.authenticate'
+  [1m[36mUser Load (0.0ms)[0m  [1m[34mSELECT "users".* FROM "users" WHERE "users"."id" = ? LIMIT ?[0m  [["id", 1], ["LIMIT", 1]]
+  [1m[36mDevice Update (0.0ms)[0m  [1m[33mUPDATE "devices" SET "last_seen_at" = ? WHERE "devices"."id" = ?[0m  [["last_seen_at", "2026-08-23 03:09:30.089634"], ["id", 1]]
+  ↳ app/models/device.rb:32:in 'Device#touch_seen!'
+  [1m[36mSync::ChangelogEntry Load (0.0ms)[0m  [1m[34mSELECT "changelog_entries".* FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ? AND (seq > ?) ORDER BY "changelog_entries"."seq" ASC LIMIT ?[0m  [["user_id", 1], [nil, 2], ["LIMIT", 500]]
+  [1m[36mNode Load (0.0ms)[0m  [1m[34mSELECT "nodes".* FROM "nodes" WHERE "nodes"."user_id" = ? AND "nodes"."node_id" = ?[0m  [["user_id", 1], ["node_id", "fddedd0f-fd1c-4b9a-a3ae-53f65880e78f"]]
+  [1m[36mSync::ChangelogEntry Minimum (0.0ms)[0m  [1m[34mSELECT MIN("changelog_entries"."seq") FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+Completed 200 OK in 2ms (Views: 0.0ms | ActiveRecord: 0.1ms (6 queries, 0 cached) | GC: 0.0ms)
+
+
+  [1m[36mUser Load (0.3ms)[0m  [1m[34mSELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT ?[0m  [["LIMIT", 1]]
+  [1m[36mUser Count (0.0ms)[0m  [1m[34mSELECT COUNT(*) FROM "users"[0m
+  [1m[36mNode Count (0.3ms)[0m  [1m[34mSELECT COUNT(*) FROM "nodes" WHERE "nodes"."user_id" = ?[0m  [["user_id", 1]]
+  [1m[36mSync::Version Count (0.2ms)[0m  [1m[34mSELECT COUNT(*) FROM "versions"[0m
+  [1m[36mSync::Chunk Count (0.2ms)[0m  [1m[34mSELECT COUNT(*) FROM "chunks"[0m
+  [1m[36mSync::ChangelogEntry Count (0.0ms)[0m  [1m[34mSELECT COUNT(*) FROM "changelog_entries" WHERE "changelog_entries"."user_id" = ?[0m  [["user_id", 1]]
+  [1m[36mNode Pluck (0.0ms)[0m  [1m[34mSELECT "nodes"."name" FROM "nodes" WHERE "nodes"."user_id" = ?[0m  [["user_id", 1]]

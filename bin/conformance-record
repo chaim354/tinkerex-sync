@@ -237,7 +237,15 @@ def record_scenario(scenario_path, base_uri:, device_token:, force:)
     path = matcher.interpolate(request.fetch("path"))
     query = request["query"] && deep_interpolate(request["query"], matcher)
     body = request["body"] && deep_interpolate(request["body"], matcher)
-    headers = DEFAULT_HEADERS.merge("Authorization" => "Bearer #{device_token}").merge(request["headers"] || {})
+    # {{name}} resolves here too, same as path/query/body -- a scenario that must authenticate as
+    # a SECOND, dynamically-enrolled device (POST /v1/devices's own device_token, captured) has no
+    # other way to name it: that token cannot be known ahead of time, so a header carrying it is
+    # exactly the "must exercise a header directly" case schema.json's own comment already
+    # anticipates, just with a captured rather than a literal value. Found by a real 401: an
+    # unresolved header was sent as the literal eight characters "{{name}}", which is not a valid
+    # bearer token and fails auth with no hint that interpolation was the thing that never ran.
+    headers = DEFAULT_HEADERS.merge("Authorization" => "Bearer #{device_token}")
+                              .merge(request["headers"] ? deep_interpolate(request["headers"], matcher) : {})
 
     status, actual_body = perform_http(base_uri:, method:, path:, query:, body:, headers:)
 

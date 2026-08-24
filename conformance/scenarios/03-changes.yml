@@ -1,0 +1,178 @@
+---
+name: 03-changes
+description: GET /v1/changes -- the pull delta. Establishes a baseline cursor (this
+  user already has history from 02-commit.yml, since every scenario file in this corpus
+  runs in filename order against one shared, freshly-minted user -- see the corpus
+  README for why), then makes three changes of its own (two mkdirs and one file commit)
+  and pages through exactly those three with since/limit, proving the cursor semantics
+  -- since= is the last-seen seq, not a page index, so the next page picks up immediately
+  after it. Also pins the two changelog entry shapes -- a plain mkdir entry (just
+  node) and a content-commit entry (node + version + manifest) -- and that head_seq
+  always reports the user's global high-water mark even when a later mutation isn't
+  itself included in a limited page.
+steps:
+- name: baseline -- read head_seq/oldest_seq before this file's own changes, without
+    asserting what earlier scenario files left in the log
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: 0
+      limit: 1
+  expect:
+    status: 200
+    body:
+      changes:
+        "$type": array
+      head_seq:
+        "$capture": baseline_head_seq
+      oldest_seq:
+        "$capture": baseline_oldest_seq
+- name: mkdir Alpha -- the first change this file makes
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 59f92dc3-2c36-462d-8761-4816e226d812
+      parent_node_id:
+      name: Alpha
+  expect:
+    status: 201
+    body:
+      node_id: 59f92dc3-2c36-462d-8761-4816e226d812
+      seq:
+        "$capture": alpha_seq
+- name: mkdir Beta -- the second change this file makes
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 3871b543-3814-4257-844e-2b61373e9d0b
+      parent_node_id:
+      name: Beta
+  expect:
+    status: 201
+    body:
+      node_id: 3871b543-3814-4257-844e-2b61373e9d0b
+      seq:
+        "$capture": beta_seq
+- name: begin a commit for note.txt -- its chunk is missing
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: ad59ebd9-e4a1-44a4-ab83-43e50032e799
+      node_id: 24dfefce-5853-4bc7-96d5-32950d65705c
+      parent_node_id:
+      name: note.txt
+      base_version_id:
+      size: 15
+      manifest:
+      - hash: 3f144fb65262700e3a2a3c5eb44bda7a77de1f958ababff7a31cb5f1b65af041
+        offset: 0
+        length: 15
+  expect:
+    status: 200
+    body:
+      commit_id: ad59ebd9-e4a1-44a4-ab83-43e50032e799
+      missing:
+      - 3f144fb65262700e3a2a3c5eb44bda7a77de1f958ababff7a31cb5f1b65af041
+      put_urls:
+        3f144fb65262700e3a2a3c5eb44bda7a77de1f958ababff7a31cb5f1b65af041:
+          "$capture": note_put_url
+- name: upload note.txt's chunk bytes
+  request:
+    method: PUT
+    path: "{{note_put_url}}"
+    body: changelog test
+  expect:
+    status: 200
+- name: finalize the note.txt commit -- the third change this file makes
+  request:
+    method: POST
+    path: "/v1/commit/ad59ebd9-e4a1-44a4-ab83-43e50032e799/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$capture": note_seq
+      version_id:
+        "$capture": note_version_id
+- name: page 1 -- since the baseline, limit 2 -- Alpha and Beta only, not note.txt
+    yet
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: "{{baseline_head_seq}}"
+      limit: 2
+  expect:
+    status: 200
+    body:
+      changes:
+      - node:
+          deleted: false
+          kind: dir
+          mode: 493
+          mtime:
+          name: Alpha
+          node_id: 59f92dc3-2c36-462d-8761-4816e226d812
+          parent_node_id:
+        node_id: 59f92dc3-2c36-462d-8761-4816e226d812
+        op: mkdir
+        seq:
+          "$ref": alpha_seq
+      - node:
+          deleted: false
+          kind: dir
+          mode: 493
+          mtime:
+          name: Beta
+          node_id: 3871b543-3814-4257-844e-2b61373e9d0b
+          parent_node_id:
+        node_id: 3871b543-3814-4257-844e-2b61373e9d0b
+        op: mkdir
+        seq:
+          "$ref": beta_seq
+      head_seq:
+        "$ref": note_seq
+      oldest_seq:
+        "$ref": baseline_oldest_seq
+- name: page 2 -- since Beta's own seq -- exactly the note.txt commit entry, nothing
+    before it
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: "{{beta_seq}}"
+      limit: 10
+  expect:
+    status: 200
+    body:
+      changes:
+      - manifest:
+        - hash: 3f144fb65262700e3a2a3c5eb44bda7a77de1f958ababff7a31cb5f1b65af041
+          length: 15
+          offset: 0
+        node:
+          deleted: false
+          kind: file
+          mode: 420
+          mtime:
+          name: note.txt
+          node_id: 24dfefce-5853-4bc7-96d5-32950d65705c
+          parent_node_id:
+        node_id: 24dfefce-5853-4bc7-96d5-32950d65705c
+        op: put
+        seq:
+          "$ref": note_seq
+        version:
+          manifest_id:
+            "$type": string
+          size: 15
+          version_id:
+            "$ref": note_version_id
+      head_seq:
+        "$ref": note_seq
+      oldest_seq:
+        "$ref": baseline_oldest_seq

@@ -1,0 +1,353 @@
+---
+name: 04-nodes
+description: >-
+  The metadata mutation surface: mkdir, symlink, move, versions, restore, resolve_conflict, and
+  delete (a directory, cascading to its children in one call). node_id/commit_id/chunk-hash values
+  below are deliberately simple, structurally-obvious-by-construction strings
+  (00000000-0000-4000-8000-0000000040NN, and 64-digit all-decimal hashes) rather than random
+  UUIDs -- there is nothing meaningful encoded in them, and a fixed, readable series is easier to
+  audit by eye for exactly the kind of copy/paste-length mistake a random hex string hides. Real
+  clients mint real random UUIDs (CLAUDE.md section 5); nothing here depends on these particular
+  ones being fake-looking. A second device is enrolled partway through, specifically to
+  manufacture a real conflict: two commits from device A followed by a third commit from device B
+  whose base_version_id names the version BEFORE device A's second commit -- stale relative to
+  the node's actual current version, and from a different device, so it is not fast-forwarded
+  away (Sync::Commit.finalize's own same-device exception does not apply). The device-B header is
+  applied only to that commit's BEGIN step, not its finalize -- pending_commits.device_id (what
+  the conflict check reads) is fixed at begin time, and finalize takes no device argument at all,
+  so any authenticated device for this user may finalize a pending commit someone else began.
+  Also notable, and worth reading in the recorded step below rather than taking on faith: neither
+  finalize response reveals whether a commit became current or was recorded as a conflict -- both
+  return the identical {version_id, seq} shape, so a real client cannot tell the two apart without
+  a separate read (GET .../versions or GET /changes, whose `op` is "put" vs "conflict").
+steps:
+- name: mkdir Docs at the root
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 00000000-0000-4000-8000-000000004001
+      parent_node_id:
+      name: Docs
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-000000004001
+      seq:
+        "$type": integer
+- name: create a symlink at the root, target base64-encoded
+  request:
+    method: POST
+    path: "/v1/nodes/symlink"
+    body:
+      node_id: 00000000-0000-4000-8000-000000004002
+      parent_node_id:
+      name: latest
+      symlink_target: Li4vc2hhcmVkL29yaWdpbmFsLnN0bA==
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-000000004002
+      seq:
+        "$type": integer
+- name: move the symlink into Docs and rename it in the same call
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000004002/move"
+    body:
+      new_parent_node_id: 00000000-0000-4000-8000-000000004001
+      new_name: current
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: begin a commit for report.pdf, filed directly under Docs
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004004
+      node_id: 00000000-0000-4000-8000-000000004003
+      parent_node_id: 00000000-0000-4000-8000-000000004001
+      name: report.pdf
+      base_version_id:
+      size: 12
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000410001'
+        offset: 0
+        length: 12
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004004
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000410001'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000410001':
+          "$capture": report_v1_put_url
+- name: upload report.pdf's first-version chunk bytes
+  request:
+    method: PUT
+    path: "{{report_v1_put_url}}"
+    body: report v1
+  expect:
+    status: 200
+- name: finalize report.pdf's first version
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000004004/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": report_v1_version_id
+- name: begin a second commit on report.pdf, based on the version just created
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004005
+      node_id: 00000000-0000-4000-8000-000000004003
+      parent_node_id: 00000000-0000-4000-8000-000000004001
+      name: report.pdf
+      base_version_id: "{{report_v1_version_id}}"
+      size: 12
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000410002'
+        offset: 0
+        length: 12
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004005
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000410002'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000410002':
+          "$capture": report_v2_put_url
+- name: upload report.pdf's second-version chunk bytes
+  request:
+    method: PUT
+    path: "{{report_v2_put_url}}"
+    body: report v2
+  expect:
+    status: 200
+- name: finalize report.pdf's second version -- a clean fast-forward, same device
+    as v1
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000004005/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": report_v2_version_id
+- name: list report.pdf's versions -- newest first
+  request:
+    method: GET
+    path: "/v1/nodes/00000000-0000-4000-8000-000000004003/versions"
+  expect:
+    status: 200
+    body:
+      versions:
+      - created_at:
+          "$type": string
+        manifest_id:
+          "$type": string
+        parent_version_id:
+          "$ref": report_v1_version_id
+        size: 12
+        version_id:
+          "$ref": report_v2_version_id
+      - created_at:
+          "$type": string
+        manifest_id:
+          "$type": string
+        parent_version_id:
+        size: 12
+        version_id:
+          "$ref": report_v1_version_id
+- name: restore report.pdf to its first version's content
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000004003/restore"
+    body:
+      version_id: "{{report_v1_version_id}}"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: enrol a second device, specifically to author a conflicting commit as a different
+    device
+  request:
+    method: POST
+    path: "/v1/devices"
+    body:
+      name: conformance-04-device-b
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$type": integer
+      device_token:
+        "$capture": device_b_token
+- name: begin shared.txt's first version, as device A (the bootstrap credential)
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004007
+      node_id: 00000000-0000-4000-8000-000000004006
+      parent_node_id:
+      name: shared.txt
+      base_version_id:
+      size: 12
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000410003'
+        offset: 0
+        length: 12
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004007
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000410003'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000410003':
+          "$capture": shared_v1_put_url
+- name: upload shared.txt's first-version chunk bytes
+  request:
+    method: PUT
+    path: "{{shared_v1_put_url}}"
+    body: shared v1
+  expect:
+    status: 200
+- name: finalize shared.txt's first version
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000004007/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": shared_v1_version_id
+- name: begin shared.txt's second version, still device A -- this becomes the node's
+    current version
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004008
+      node_id: 00000000-0000-4000-8000-000000004006
+      parent_node_id:
+      name: shared.txt
+      base_version_id: "{{shared_v1_version_id}}"
+      size: 12
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000410004'
+        offset: 0
+        length: 12
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004008
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000410004'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000410004':
+          "$capture": shared_v2_put_url
+- name: upload shared.txt's second-version chunk bytes
+  request:
+    method: PUT
+    path: "{{shared_v2_put_url}}"
+    body: shared v2
+  expect:
+    status: 200
+- name: finalize shared.txt's second version -- still a clean fast-forward
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000004008/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: begin shared.txt's third version AS DEVICE B, based on the first version --
+    stale
+  request:
+    method: POST
+    path: "/v1/commit"
+    headers:
+      Authorization: Bearer {{device_b_token}}
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004009
+      node_id: 00000000-0000-4000-8000-000000004006
+      parent_node_id:
+      name: shared.txt
+      base_version_id: "{{shared_v1_version_id}}"
+      size: 12
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000410005'
+        offset: 0
+        length: 12
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000004009
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000410005'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000410005':
+          "$capture": shared_v3_put_url
+- name: upload shared.txt's third-version chunk bytes
+  request:
+    method: PUT
+    path: "{{shared_v3_put_url}}"
+    body: shared v3
+  expect:
+    status: 200
+- name: finalize shared.txt's third version -- device A's own credential is fine here;
+    device identity for the conflict check was already fixed at begin time
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000004009/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": shared_v3_version_id
+- name: resolve the conflict -- keep the third (device B) version as current
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000004006/resolve_conflict"
+    body:
+      keep_version_id: "{{shared_v3_version_id}}"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: delete Docs -- cascades to its two children, current (symlink) and report.pdf,
+    in one call
+  request:
+    method: DELETE
+    path: "/v1/nodes/00000000-0000-4000-8000-000000004001"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer

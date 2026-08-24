@@ -57,6 +57,38 @@ class ConformanceTest < ActiveSupport::TestCase
 
   SCENARIO_PATHS = Dir.glob(File.join(SCENARIOS_DIR, "*.yml")).sort.freeze
 
+  # MINITEST RANDOMIZES TEST-METHOD EXECUTION ORDER BY DEFAULT, AND THAT IS WRONG HERE -- not a
+  # style preference, a correctness bug this file shipped with. Every scenario file below runs
+  # against ONE SHARED, CONTINUOUSLY-MUTATED USER (one SYNC_DEVICE_TOKEN for the whole process),
+  # so the corpus is not a set of independent tests -- it is one long, ordered session split across
+  # files for readability, and later files ALREADY lean on that: 03-changes.yml's own description
+  # says "this user already has history from 02-commit.yml", and 05-trash.yml's first three steps
+  # restore tombstones that only exist because 04-nodes.yml's last step put them there. Even
+  # 01-enrolment.yml's literal `head_seq: 0` depends on running FIRST -- true by accident until a
+  # second scenario file existed to run before it. Proven by running this suite repeatedly: a
+  # `--seed` that happened to schedule 05-trash.yml before 04-nodes.yml turned "restore 04-nodes
+  # .yml's leftover Docs tombstone" into a 404 (nothing had tombstoned it yet), on a corpus where
+  # every file was individually correct.
+  #
+  # `def self.test_order = :alpha` -- what an earlier version of this comment block sat above --
+  # is a NO-OP on the minitest actually installed here (6.0.6): that gem renamed the override
+  # point from Minitest 5's `test_order` to `run_order` (lib/minitest/test.rb, both
+  # `Test.runnable_methods` and `Runnable.run_order`'s own default use the new name), so a class
+  # defining the old one just adds an unused method while `run_order` keeps returning its base
+  # `:random`. Silent, not an error: `ConformanceTest.test_order` still answered `:alpha` when
+  # asked directly, which is exactly why this needs a comment and not just a diff. Found by running
+  # the suite --verbose and reading the actual execution order, not by reading minitest's CHANGELOG.
+  # `i_suck_and_my_tests_are_order_dependent!` is minitest's own public, documented convenience for
+  # this (`Minitest::Test.i_suck_and_my_tests_are_order_dependent!`) -- used instead of `def
+  # self.run_order = :alpha` directly because it is the stable public API (a method rename between
+  # major versions already bit this file once) and because its deliberately self-deprecating name
+  # is itself the warning: this suite is ORDER-DEPENDENT ON PURPOSE, not a suite that forgot to
+  # isolate its tests. `:alpha` sorts test METHOD NAMES, which each embed the scenario's own
+  # zero-padded filename (`test_conformance_scenario:_02-commit.yml`, ...) -- so alphabetical is
+  # filename order here, the same order `SCENARIO_PATHS.sort` already uses to generate them, not a
+  # second, independently-chosen ordering that could drift from it.
+  i_suck_and_my_tests_are_order_dependent!
+
   test "the corpus has at least one scenario file" do
     assert SCENARIO_PATHS.any?,
            "no *.yml files found under #{SCENARIOS_DIR} -- every test below is generated from " \
@@ -123,7 +155,13 @@ class ConformanceTest < ActiveSupport::TestCase
       path    = matcher.interpolate(request.fetch("path"))
       query   = request["query"] && deep_interpolate(request["query"], matcher)
       body    = request["body"]  && deep_interpolate(request["body"], matcher)
-      headers = DEFAULT_HEADERS.merge("Authorization" => "Bearer #{device_token}").merge(request["headers"] || {})
+      # {{name}} resolves here too, same as path/query/body, and the same as bin/conformance-record
+      # does it -- see that file's own comment on the identical line. A scenario authenticating as
+      # a second, dynamically-enrolled device names its captured device_token in a header; without
+      # this, the verifier would replay a literal, unresolved "{{device_b_token}}" and get a 401
+      # that has nothing to do with what the step is actually testing.
+      headers = DEFAULT_HEADERS.merge("Authorization" => "Bearer #{device_token}")
+                                .merge(request["headers"] ? deep_interpolate(request["headers"], matcher) : {})
 
       status, actual_body = perform_request(base_uri:, method:, path:, query:, body:, headers:)
 

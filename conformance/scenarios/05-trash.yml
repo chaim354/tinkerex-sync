@@ -1,0 +1,201 @@
+---
+name: 05-trash
+description: >-
+  GET /v1/trash and POST /v1/trash/:node_id/restore -- deleted-file recovery. The centerpiece is
+  the to_root divergence: restoring a tombstoned node whose PARENT is itself still tombstoned (an
+  orphan) is refused with 409 parent_deleted unless the caller passes to_root: true, in which case
+  it succeeds and the node comes back re-parented to the library root (parent_node_id explicitly
+  null, not merely absent). This is a live divergence between the two real FileLayer adapters --
+  FileLayer::Chunk (embedded) sends to_root: true unconditionally, while FileLayer::ChunkRemote (a
+  separate sync client talking to a server like this one over HTTP) posts an empty body and so
+  always hits the 409. Neither behaviour is being called "correct" here; this file pins what the
+  SERVER actually does on both paths, so a future implementation cannot quietly pick one without a
+  test naming it. Also pins: a node whose tombstone is NOT orphaned (its own parent is live, or
+  already root-level) restores cleanly with no to_root needed at all, and restoring an
+  already-live node is an idempotent success (seq: null) rather than a 404 or a 422 -- there is
+  nothing to undo, so there is nothing to append to the changelog. The first three steps restore
+  04-nodes.yml's own leftover tombstones (Docs, its symlink, and report.pdf -- that file's last
+  step deletes Docs and never restores it, by design, to prove the cascade) so this file's own
+  trash listing is exact and not coupled to what an earlier scenario file happened to leave
+  behind -- every scenario file in this corpus runs against one shared, continuously-mutated user
+  in filename order, so GET /v1/trash is a genuinely global, cross-file view, not a per-file one.
+steps:
+- name: restore 04-nodes.yml's leftover Docs tombstone -- its own parent is the root,
+    so this is a clean restore
+  request:
+    method: POST
+    path: "/v1/trash/00000000-0000-4000-8000-000000004001/restore"
+  expect:
+    status: 200
+    body:
+      node_id: 00000000-0000-4000-8000-000000004001
+      parent_node_id:
+      seq:
+        "$type": integer
+- name: restore 04-nodes.yml's leftover symlink tombstone -- Docs is live again now,
+    so this is clean too
+  request:
+    method: POST
+    path: "/v1/trash/00000000-0000-4000-8000-000000004002/restore"
+  expect:
+    status: 200
+    body:
+      node_id: 00000000-0000-4000-8000-000000004002
+      parent_node_id: 00000000-0000-4000-8000-000000004001
+      seq:
+        "$type": integer
+- name: restore 04-nodes.yml's leftover report.pdf tombstone -- same reason
+  request:
+    method: POST
+    path: "/v1/trash/00000000-0000-4000-8000-000000004003/restore"
+  expect:
+    status: 200
+    body:
+      node_id: 00000000-0000-4000-8000-000000004003
+      parent_node_id: 00000000-0000-4000-8000-000000004001
+      seq:
+        "$type": integer
+- name: mkdir Temp at the root
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 00000000-0000-4000-8000-000000005001
+      parent_node_id:
+      name: Temp
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-000000005001
+      seq:
+        "$type": integer
+- name: begin a commit for child.txt, filed under Temp
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000005003
+      node_id: 00000000-0000-4000-8000-000000005002
+      parent_node_id: 00000000-0000-4000-8000-000000005001
+      name: child.txt
+      base_version_id:
+      size: 11
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000520001'
+        offset: 0
+        length: 11
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000005003
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000520001'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000520001':
+          "$capture": child_put_url
+- name: upload child.txt's chunk bytes
+  request:
+    method: PUT
+    path: "{{child_put_url}}"
+    body: child bytes
+  expect:
+    status: 200
+- name: finalize child.txt
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000005003/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": child_version_id
+- name: delete Temp -- cascades to child.txt too, tombstoning both in one call
+  request:
+    method: DELETE
+    path: "/v1/nodes/00000000-0000-4000-8000-000000005001"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: trash lists exactly the two tombstones this file itself just made
+  request:
+    method: GET
+    path: "/v1/trash"
+  expect:
+    status: 200
+    body:
+      items:
+      - deleted_at:
+          "$type": string
+        kind: file
+        name: child.txt
+        node_id: 00000000-0000-4000-8000-000000005002
+        parent_node_id: 00000000-0000-4000-8000-000000005001
+        size: 11
+        version_id:
+          "$ref": child_version_id
+      - deleted_at:
+          "$type": string
+        kind: dir
+        name: Temp
+        node_id: 00000000-0000-4000-8000-000000005001
+        parent_node_id:
+        size:
+        version_id:
+- name: restore child.txt WITHOUT to_root -- its parent (Temp) is still tombstoned,
+    so this is a 409, not a silent resurrection into a deleted tree
+  request:
+    method: POST
+    path: "/v1/trash/00000000-0000-4000-8000-000000005002/restore"
+  expect:
+    status: 409
+    body:
+      error: parent_deleted
+- name: restore child.txt WITH to_root -- succeeds, re-parented to the library root;
+    parent_node_id comes back explicitly null, not merely absent from the response
+  request:
+    method: POST
+    path: "/v1/trash/00000000-0000-4000-8000-000000005002/restore"
+    body:
+      to_root: true
+  expect:
+    status: 200
+    body:
+      node_id: 00000000-0000-4000-8000-000000005002
+      parent_node_id:
+      seq:
+        "$type": integer
+- name: 'restore child.txt again -- it is already live, so this is an idempotent success
+    (seq: null), not a 404 or a 422'
+  request:
+    method: POST
+    path: "/v1/trash/00000000-0000-4000-8000-000000005002/restore"
+  expect:
+    status: 200
+    body:
+      node_id: 00000000-0000-4000-8000-000000005002
+      parent_node_id:
+      seq:
+- name: restore Temp -- its OWN parent is the root, never deleted, so this is a clean
+    restore with no to_root needed at all
+  request:
+    method: POST
+    path: "/v1/trash/00000000-0000-4000-8000-000000005001/restore"
+  expect:
+    status: 200
+    body:
+      node_id: 00000000-0000-4000-8000-000000005001
+      parent_node_id:
+      seq:
+        "$type": integer
+- name: trash is empty again -- both tombstones were restored
+  request:
+    method: GET
+    path: "/v1/trash"
+  expect:
+    status: 200
+    body:
+      items: []

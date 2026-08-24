@@ -46,8 +46,8 @@
         },
         "path": {
           "type": "string",
-          "pattern": "^/",
-          "$comment": "An absolute request path, e.g. \"/v1/nodes/{{node}}/move\" -- not a route name and not relative to namespace :v1. May contain {{name}} placeholders; conformance/runner.rb#interpolate is what resolves them, from values a PRIOR step's expect.body bound with $capture."
+          "pattern": "^(/|\\{\\{\\w+\\}\\}$)",
+          "$comment": "An absolute request path, e.g. \"/v1/nodes/{{node}}/move\" -- not a route name and not relative to namespace :v1. May contain {{name}} placeholders anywhere within it; conformance/runner.rb#interpolate is what resolves them, from values a PRIOR step's expect.body bound with $capture. The second alternative -- the ENTIRE path being exactly one {{name}} placeholder, nothing before or after -- exists for a presigned chunk-upload/download URL (PUT/GET /v1/chunks/blob/:user_id/:hash), which Sync::Storage::LocalChunkStore#presign_put/#presign_get hand back as one complete, HMAC-signed URL (scheme+host+path+query combined) rather than as components a scenario could reassemble itself: there is no server-supplied field for the exp/sig query params separately, and no secret this corpus has access to for computing a valid sig by hand (that is the whole point of the signature). Any real sync-server implementation presigning uploads this way has the identical shape, so this is not specific to this Ruby implementation. A path that is a placeholder PLUS other text (\"{{x}}/move\", no leading /) still fails -- only a bare \"/...\" or an exact \"{{name}}\" is accepted, so a typo'd relative path is still caught at schema-validation time, before a single request goes out."
         },
         "query": {
           "type": "object",

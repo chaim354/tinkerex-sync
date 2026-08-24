@@ -1,0 +1,125 @@
+---
+name: 02-commit
+description: The two-phase content commit (POST /v1/commit -> POST /v1/commit/:commit_id/finalize),
+  the sync engine's write path for file bytes. Pins put_urls/missing on begin (a brand-new
+  chunk hash is missing and gets a presigned PUT URL; a hash this user already has
+  requires neither), a real presigned upload followed by a successful finalize, content-addressed
+  dedup (a second file reusing the first file's chunk hash needs no upload at all),
+  and finalize's own byte-arrived guard (a commit that is never uploaded is refused
+  at finalize, not silently accepted). Every node_id/commit_id/chunk hash below is
+  client-chosen (the architecture's own rule -- CLAUDE.md section 5, "Stable cross-device
+  ids are string UUIDs"), so this file asserts them as literals rather than capturing
+  them from a response; only truly server-decided values (version_id, seq, and the
+  presigned URL itself) are captured.
+steps:
+- name: begin a commit for a new file -- its one chunk is missing and gets a presigned
+    PUT URL
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: ed85b9c8-d89b-4385-9fc6-33b28c08a9e3
+      node_id: f604301f-4838-454d-929a-b9d649ed60b7
+      parent_node_id:
+      name: drawing.svg
+      base_version_id:
+      size: 13
+      manifest:
+      - hash: cdb31e4c07142f506747b3da5ae836e4efc65593267e37c272c4e1d30d28929b
+        offset: 0
+        length: 13
+  expect:
+    status: 200
+    body:
+      commit_id: ed85b9c8-d89b-4385-9fc6-33b28c08a9e3
+      missing:
+      - cdb31e4c07142f506747b3da5ae836e4efc65593267e37c272c4e1d30d28929b
+      put_urls:
+        cdb31e4c07142f506747b3da5ae836e4efc65593267e37c272c4e1d30d28929b:
+          "$capture": drawing_put_url
+- name: upload the missing chunk's bytes to the presigned PUT URL from the previous
+    step
+  request:
+    method: PUT
+    path: "{{drawing_put_url}}"
+    body: drawing bytes
+  expect:
+    status: 200
+- name: finalize the commit -- creates the version, appends one changelog entry
+  request:
+    method: POST
+    path: "/v1/commit/ed85b9c8-d89b-4385-9fc6-33b28c08a9e3/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: begin a second file reusing the first file's chunk hash -- nothing is missing,
+    no put_urls
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 41f88704-33ba-4ae0-ba56-f8ddae0ed9e9
+      node_id: 3bfa0f25-7ae9-48cc-abdd-f3dc67980be4
+      parent_node_id:
+      name: drawing-copy.svg
+      base_version_id:
+      size: 13
+      manifest:
+      - hash: cdb31e4c07142f506747b3da5ae836e4efc65593267e37c272c4e1d30d28929b
+        offset: 0
+        length: 13
+  expect:
+    status: 200
+    body:
+      commit_id: 41f88704-33ba-4ae0-ba56-f8ddae0ed9e9
+      missing: []
+      put_urls: {}
+- name: finalize the deduped commit -- no upload happened, and none was needed
+  request:
+    method: POST
+    path: "/v1/commit/41f88704-33ba-4ae0-ba56-f8ddae0ed9e9/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: begin a third file with a chunk nobody has ever seen
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: e665f59a-1dc4-4e92-b674-f41067a88272
+      node_id: b5d650f7-b43a-4f52-b2ea-6e984358ec50
+      parent_node_id:
+      name: never-uploaded.bin
+      base_version_id:
+      size: 9
+      manifest:
+      - hash: 0d2206dcdb58ed78176dbc7f5a56742489b0c1bce018f2e47e0de7b490fae45f
+        offset: 0
+        length: 9
+  expect:
+    status: 200
+    body:
+      commit_id: e665f59a-1dc4-4e92-b674-f41067a88272
+      missing:
+      - 0d2206dcdb58ed78176dbc7f5a56742489b0c1bce018f2e47e0de7b490fae45f
+      put_urls:
+        0d2206dcdb58ed78176dbc7f5a56742489b0c1bce018f2e47e0de7b490fae45f:
+          "$type": string
+- name: finalize without ever uploading the chunk -- refused, not silently accepted
+  request:
+    method: POST
+    path: "/v1/commit/e665f59a-1dc4-4e92-b674-f41067a88272/finalize"
+  expect:
+    status: 422
+    body:
+      error: chunks_missing
+      missing:
+      - 0d2206dcdb58ed78176dbc7f5a56742489b0c1bce018f2e47e0de7b490fae45f

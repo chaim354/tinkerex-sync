@@ -44,11 +44,31 @@
 # should have been a $capture/$ref pair instead (conformance/README.md, a later task, is where
 # that review process is written down for good; this comment is the whole of it for now).
 #
-# --force DISCARDS PROTECTION FOR EVERY STEP IN THE FILE, INCLUDING ANY HUMAN-ADDED $capture. It
-# is the blunt "re-record from scratch" escape hatch the task's own rule reserves the word
-# "unless" for -- not a per-step scalpel. A scenario whose later steps depend on an earlier step's
-# $capture will need those re-added by hand after a forced re-record, exactly as after the first
-# recording ever made; this tool does not try to be cleverer than that about it.
+# --force DISCARDS EVERY STEP'S RECORDED expect:, INCLUDING ANY HUMAN-ADDED $capture, AND
+# REPLACES IT WITH A FRESH GUESS FROM THE LIVE RESPONSE -- AS IF THE STEP HAD NEVER BEEN RECORDED
+# AT ALL. It is the blunt "re-record from scratch" escape hatch the task's own rule reserves the
+# word "unless" for -- not a per-step scalpel. So a step's OWN on-disk $capture does not survive a
+# forced re-record and has to be retyped by hand afterward if it is still needed, exactly as after
+# the very first recording ever made -- this tool does not try to be cleverer than that about a
+# step's own expectation.
+#
+# WHAT DOES SURVIVE A FORCED RE-RECORD: a LATER step in the SAME run depending on an EARLIER
+# step's $capture, e.g. 02-commit.yml's `PUT {{drawing_put_url}}`, fed from the previous step's
+# `put_urls.<hash>: {"$capture": drawing_put_url}`. A request's {{name}} is interpolated (see
+# deep_interpolate below) BEFORE that request is sent, which is before the step that produced it
+# has its own expectation overwritten. A NON-forced already-recorded step keeps getting that
+# binding as a side effect of the already_recorded && !force branch's own #match! call below --
+# unchanged. What was missing is the FORCED case: before overwriting an already-recorded step's
+# expectation, this tool now walks that OLD expectation against the NEW live response via
+# Conformance::Matcher#bind_captures!, binding whatever $capture names it declares. That is NOT
+# the validating #match! the non-force branch uses -- #bind_captures! never raises, because
+# --force exists precisely for a response that may no longer match the old recording's shape, and
+# re-imposing that check here would make --force refuse to run over the very drift it is meant to
+# accept. See that method's own comment in conformance/runner.rb for what it does with a $ref
+# (nothing -- it verifies, it does not bind) and with a shape it can no longer walk (stops
+# quietly, binds what it can). Skip this and a scenario built entirely around --force's own
+# documented promise -- discard and start over -- cannot even finish discarding: the very next
+# {{name}} raises before this tool gets anywhere near writing the file back out.
 #
 # DETERMINISTIC OUTPUT: this tool rewrites the WHOLE scenario file through Psych (via the YAML
 # module), not a text-level patch, so a re-record with nothing left to change produces a
@@ -300,6 +320,19 @@ def record_scenario(scenario_path, base_uri:, device_token:, force:)
       end
       puts "  [skip] #{step['name']} -- #{method} #{path} -> #{status} (already recorded; pass --force to overwrite)"
       next
+    end
+
+    # A step reaching here with a NON-EMPTY old `expect` got here only because --force skipped
+    # the already_recorded branch above -- the one that would otherwise have called #match!, the
+    # ONLY thing that binds a $capture. Left alone, a step's own recorded {"$capture": ...} was
+    # silently thrown away on every --force run, and the very next step's {{name}} interpolation
+    # (built above, before ITS OWN request went out) raised "no earlier $capture bound this name"
+    # -- reproduced for real on 02-commit.yml. #bind_captures! never raises (see its own comment
+    # in conformance/runner.rb), so walking the old expectation here cannot turn into a second
+    # reason --force refuses to run; it only ever adds bindings, never validates.
+    if already_recorded
+      matcher.bind_captures!(expect.fetch("status"), status)
+      matcher.bind_captures!(expect["body"], actual_body) if expect.key?("body")
     end
 
     new_expect = { "status" => status }

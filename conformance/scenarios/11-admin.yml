@@ -1,0 +1,89 @@
+---
+name: 11-admin
+description: POST /v1/admin/libraries -- provisioning, gated by SYNC_ADMIN_TOKEN,
+  a distinct operator credential no device token can satisfy. This server process
+  is booted with SYNC_ADMIN_TOKEN=conformance-corpus-admin-token specifically so this
+  file can record and replay against it (see conformance/README.md's "Running it"
+  section and .github/workflows/ci.yml's conformance job, both of which set it) --
+  unlike every other credential this corpus uses, the admin token is never discovered
+  from a response, so it has to be a fixed, known value both the recording run and
+  every later replay agree on. The refusals come first, proving auth is checked before
+  anything is created (no row appears for any of them) -- no Authorization header
+  at all, an Authorization header carrying the wrong value, and -- the one that actually
+  matters -- this corpus's own ordinary bootstrap DEVICE token, sent with no header
+  override at all so the runner's own default applies, proving the two credential
+  kinds are not interchangeable rather than merely asserting it. Only then does a
+  real admin-authenticated call succeed, and a second call for the SAME email is refused
+  rather than silently minting a second device onto the library the first call already
+  created -- this corpus's own pin of the idempotency decision Sync::V1::Admin::LibrariesController's
+  own comment argues at length. Unlike every other file here, this one needs a genuinely
+  fresh database (its email must never have been used before) -- see that same workflow
+  step's own comment for how CI guarantees that.
+steps:
+- name: no Authorization header at all is refused, before anything is created
+  request:
+    method: POST
+    path: "/v1/admin/libraries"
+    headers:
+      Authorization: ''
+    body:
+      email: should-never-be-created-noauth@tinkerex-sync.test
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: the wrong token is refused
+  request:
+    method: POST
+    path: "/v1/admin/libraries"
+    headers:
+      Authorization: Bearer this-is-not-the-real-admin-token
+    body:
+      email: should-never-be-created-wrongtoken@tinkerex-sync.test
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: this corpus's own bootstrap DEVICE token is refused as an admin token -- the
+    two credentials are not interchangeable (no headers override here; the runner's
+    own default Authorization is this corpus's ordinary device token)
+  request:
+    method: POST
+    path: "/v1/admin/libraries"
+    body:
+      email: should-never-be-created-devicetoken@tinkerex-sync.test
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: a valid admin token provisions a new library -- a User plus its first Device
+  request:
+    method: POST
+    path: "/v1/admin/libraries"
+    headers:
+      Authorization: Bearer conformance-corpus-admin-token
+    body:
+      email: new-library@tinkerex-sync.test
+      name: conformance-provisioned-device
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$type": integer
+      device_token:
+        "$type": string
+      user_id:
+        "$type": integer
+- name: a repeat call for the same email refuses (409) rather than silently minting
+    a second device onto the library the previous step already created
+  request:
+    method: POST
+    path: "/v1/admin/libraries"
+    headers:
+      Authorization: Bearer conformance-corpus-admin-token
+    body:
+      email: new-library@tinkerex-sync.test
+  expect:
+    status: 409
+    body:
+      error: email_taken

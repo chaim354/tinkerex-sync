@@ -51,7 +51,7 @@ class ConformanceTest < ActiveSupport::TestCase
   # mid-run, so re-parsing it per scenario would be pure waste.
   SCHEMA = JSONSchemer.schema(Pathname.new(SCHEMA_PATH))
 
-  # Sync's OWN 25 routes, drawn into a throwaway RouteSet -- built once, the same way SCHEMA is,
+  # Sync's OWN 26 routes, drawn into a throwaway RouteSet -- built once, the same way SCHEMA is,
   # rather than inside the coverage test itself. Deliberately NOT Rails.application.routes: this
   # test/dummy process draws its own dev/blobs + action_cable routes alongside Sync's (see
   # test/dummy/config/routes.rb), and recognizing a path against a superset route set would let a
@@ -74,17 +74,18 @@ class ConformanceTest < ActiveSupport::TestCase
   # is a bug in THIS list, not a passing exception), so a route rename can't leave a stale excuse
   # sitting here unnoticed.
   #
-  # EMPTY TODAY, ON PURPOSE, NOT A PLACEHOLDER LEFT FOR LATER: every one of the 25 routes
+  # EMPTY TODAY, ON PURPOSE, NOT A PLACEHOLDER LEFT FOR LATER: every one of the 26 routes
   # Sync.draw_v1_routes defines is exercised by a real scenario step somewhere in conformance/
-  # scenarios/*.yml, including the two that looked likeliest to need an exception going in --
+  # scenarios/*.yml, including the ones that looked likeliest to need an exception going in --
   # POST /v1/share_links's anonymous redeem counterpart needs no second real device or
   # out-of-band credential (a second/third DEVICE is just another self-service POST /v1/devices
-  # call against the SAME user, which this corpus already relies on for N-way conflicts), and
-  # neither presigned chunk-blob verb needs real object storage (STORAGE_BACKEND=local's
-  # LocalChunkStore is real HTTP PUT/GET against THIS server, not a mock). The mechanism stays
-  # here, empty, so the day a 26th endpoint genuinely does need one (a second real deployment
-  # user, a real S3 credential), it has a place to go with its own stated reason rather than a
-  # silent gap.
+  # call against the SAME user, which this corpus already relies on for N-way conflicts), neither
+  # presigned chunk-blob verb needs real object storage (STORAGE_BACKEND=local's LocalChunkStore is
+  # real HTTP PUT/GET against THIS server, not a mock), and POST /v1/admin/libraries needs no live
+  # secrets vault either -- SYNC_ADMIN_TOKEN is a fixed test fixture the booted server and
+  # 11-admin.yml both agree on (see that file's own description). The mechanism stays here, empty,
+  # so the day a 27th endpoint genuinely does need one (a real S3 credential, say), it has a place
+  # to go with its own stated reason rather than a silent gap.
   COVERAGE_EXCEPTIONS = {}.freeze
 
   # MINITEST RANDOMIZES TEST-METHOD EXECUTION ORDER BY DEFAULT, AND THAT IS WRONG HERE -- not a
@@ -125,7 +126,7 @@ class ConformanceTest < ActiveSupport::TestCase
            "this list, so an empty list means this file would verify nothing while still exiting green"
   end
 
-  # COVERAGE, DERIVED FROM THE DRAWER -- NOT A HAND-WRITTEN LIST. A hand-written list of "the 25
+  # COVERAGE, DERIVED FROM THE DRAWER -- NOT A HAND-WRITTEN LIST. A hand-written list of "the 26
   # endpoints" would be a THIRD description of the same routes lib/tinkerex_sync/v1_routes.rb
   # already exists to be the single definition of (that file's own header names exactly this
   # failure shape for its OWN two callers: a hand-copied route list "can drift, which is the gap
@@ -207,7 +208,7 @@ class ConformanceTest < ActiveSupport::TestCase
   BLOB_PLACEHOLDER_RE = /\A\{\{\w+\}\}\z/
 
   # "VERB controller#action" for one scenario step's request, recognized against SYNC_ROUTE_SET --
-  # or nil when the path is not one of Sync's 25 routes at all. That "nil, not a failure" case is
+  # or nil when the path is not one of Sync's 26 routes at all. That "nil, not a failure" case is
   # deliberate and covers two real things this corpus's own requests do: call a HOST route this
   # engine does not draw (POST /v1/devices, GET /v1/devices/whoami -- enrolment and the extra
   # devices 04/07/08 mint), which is not Sync.draw_v1_routes' concern and so not this coverage

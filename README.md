@@ -16,12 +16,12 @@ has those should not be made to adopt a second set.
 
 | Obligation | What it is |
 |---|---|
-| `User`, `Node`, `Device` | `TinkerexSync::HOST_MODELS`. `User` must expose `next_seq!`, `Device` must expose `.authenticate`, `Node` must expose `#file?`. |
+| `User`, `Node`, `Device` | `TinkerexSync::HOST_MODELS`. `User` must expose `next_seq!` and, since Arc C's admin provisioning endpoint, `.create!(email:)`/`.exists?(email:)` against a `users.email` column carrying presence + a DB-level unique index. `Device` must expose `.authenticate` and, since the same arc, `.register!(user:, name:)` returning an instance whose `#plaintext_token` answers the one-time-shown token. `Node` must expose `#file?`. Both hosts this gem has ever had (`host/`, `test/dummy`) already carried the email column and `Device.register!` before Arc C existed — this row documents what was already true in practice, not a new constraint on a working host. |
 | `ApplicationRecord`, `ApplicationJob`, `ApplicationCable::Channel` | Every engine class names these explicitly, so `isolate_namespace` cannot misresolve them. |
 | `limits_concurrency` on `ApplicationJob` | Used by `Sync::RetentionJob`. This is **solid_queue's extension, not core ActiveJob** — the gemspec does not depend on solid_queue, because the host picks its own queue adapter. |
 | Routes | `Sync.draw_v1_routes(mapper)`, called inside your own `namespace :v1`. |
 | **Action Cable adapter** | `config/cable.yml`. The engine broadcasts on every commit, mutation and restore — that is how devices learn there is something to pull. With no adapter configured, ActionCable's config is `nil` and the broadcast raises `undefined method 'fetch' for nil` **from inside the commit**, naming neither cable nor configuration. The engine cannot default it: `async` is wrong for more than one process, `redis` needs a server, `solid_cable` needs a database. |
-| **Device enrolment** | The engine draws **no** devices route — obtaining a token is entirely yours, which is why `Device` is in `HOST_MODELS`. `host/` ships one answer (an operator-minted first token, siblings enrolled by an authenticated device, no password anywhere). |
+| **Device enrolment** | The engine draws **no** route for enrolling a sibling device onto an *existing* user — obtaining that kind of token is entirely yours, which is why `Device` is in `HOST_MODELS`. `host/` ships one answer (an operator-minted first token, siblings enrolled by an authenticated device, no password anywhere). The engine **does** draw one provisioning route, `POST /v1/admin/libraries` (`Sync::V1::Admin::LibrariesController`), gated by a distinct `SYNC_ADMIN_TOKEN` operator credential rather than a device token — it creates a *brand-new* User plus its first Device, not a sibling on one that already exists, which is a different enough operation that it lives in the engine rather than needing every host to reimplement it. |
 
 ### What the engine defaults for you
 
@@ -98,8 +98,13 @@ bundle install
 bundle exec rake test
 ```
 
-204 runs, 664 assertions, 0 failures. (One skip: a Postgres pooler probe, which needs a live
-Postgres.)
+254 runs, 755 assertions, 0 failures. (12 skips with no live server configured — 11 conformance
+scenario files plus a Postgres pooler probe, which needs a live Postgres; see
+`conformance/README.md` for running the corpus for real. This line previously read "one skip,"
+true before the conformance suite existed but stale for a while after — a claim naming a count is
+only as good as whoever remembers to re-measure it after the next thing that changes it, which is
+exactly the discipline `docs/STATUS.md`-style "verify a commit reference the way you verify a
+guard" — one repo over — argues for.)
 
 `test/dummy` is a minimal host that supplies exactly the obligations above and nothing else — its
 job is to prove the engine loads and runs in a process that has never seen the application it was

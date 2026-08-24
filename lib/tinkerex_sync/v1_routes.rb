@@ -75,6 +75,12 @@ module Sync
         constraints: { hash: /[0-9a-f]+/ }
     get "chunks/blob/:user_id/:hash", to: "/sync/v1/chunks/blob#download",
         constraints: { hash: /[0-9a-f]+/ }
+
+    # admin: library provisioning (Arc C) -- gated by SYNC_ADMIN_TOKEN, a distinct operator
+    # credential a device token can never satisfy. See Sync::V1::Admin::LibrariesController for
+    # the whole argument, including why this is the one v1 endpoint that is NOT under
+    # Sync::V1::BaseController's device-token auth.
+    post "admin/libraries", to: "/sync/v1/admin/libraries#create"
   end
 
   # Call from inside a `namespace :v1` block: `Sync.draw_v1_routes(self)`.

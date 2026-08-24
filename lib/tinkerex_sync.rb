@@ -15,9 +15,19 @@ module TinkerexSync
   #             engine's migration runs. That ordering is deliberate: it fails loudly at install
   #             rather than silently at runtime, and it is what keeps `dependent: :destroy` from
   #             being the only thing standing between a deleted user and orphaned engine rows.
+  #             SINCE ARC C: also `.create!(email:)` and `.exists?(email:)` against a `users.email`
+  #             column carrying presence + a DB-level unique index -- Sync::V1::Admin::LibrariesController
+  #             (POST /v1/admin/libraries) is the one engine caller. Both hosts this gem has ever
+  #             had (host/, test/dummy) already carried exactly this column and validation before
+  #             Arc C existed, so this line documents a requirement that was already true in
+  #             practice rather than one that newly constrains a working host.
   #   Node   -- the catalog row. All three FileLayer backends populate it; it is the straddler.
   #   Device -- the credential. Its token is the ONLY thing the whole v1 API accepts, maker
   #             endpoints included, which is why it stays host-side rather than moving here.
+  #             SINCE ARC C: also `.register!(user:, name:)`, returning an instance whose
+  #             `#plaintext_token` answers the one-time-shown token -- the same shape
+  #             `sync:device:issue` and `POST /v1/devices` already relied on host-side; provisioning
+  #             is the first ENGINE caller.
   HOST_MODELS = %w[User Node Device].freeze
 
   # AND THREE FRAMEWORK BASE CLASSES THE MODEL LIST DOES NOT COVER, found by booting the dummy app

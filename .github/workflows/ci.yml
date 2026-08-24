@@ -68,7 +68,7 @@ jobs:
         run: bundle install --quiet
 
       # A UNIQUE EMAIL PER RUN (run id + attempt), not a fixed one. The self-hosted runner is
-      # PERSISTENT -- host/storage/development.sqlite3 is not recreated between jobs -- and
+      # PERSISTENT -- host/storage/development.sqlite3 was not recreated between jobs -- and
       # 01-enrolment.yml's first step asserts whoami's head_seq is the LITERAL 0. That happens to
       # hold even for a reused user today (nothing in this corpus yet advances head_seq), but
       # tying correctness to "no scenario has done that yet" is exactly the kind of assumption
@@ -76,6 +76,21 @@ jobs:
       # green suite is not evidence a guard works if its precondition was never really exercised).
       # A fresh user every run sidesteps the question entirely, at no cost -- Device.register!
       # does not touch head_seq either way, so this changes nothing about what gets verified.
+      #
+      # 11-admin.yml MADE "was not recreated" ABOVE FALSE, SO THE DATABASE ITSELF IS NOW WIPED
+      # BELOW, EVERY RUN. The randomized-email trick above only ever protected the BOOTSTRAP
+      # device's user. 11-admin.yml provisions a SECOND user through POST /v1/admin/libraries with
+      # a FIXED, checked-in email (new-library@tinkerex-sync.test) -- fixed because, unlike the
+      # bootstrap device's email above, nothing in the conformance wire format lets a scenario file
+      # interpolate a CI run id into a request body; SYNC_ADMIN_TOKEN below is a fixed, checked-in
+      # value for the identical reason (see conformance/scenarios/11-admin.yml's own description).
+      # That file's first successful step, "a valid admin token provisions a new library", expects
+      # 201 -- the SECOND time this job ever ran that exact request against a reused database it
+      # would get 409 instead (email_taken), and a corpus that only passes on a job's first-ever
+      # run is not a passing corpus. `rm -f` rather than a `db:reset` task: sqlite's whole database
+      # is one file (plus WAL/SHM sidecars this app's own `timeout:`-tuned adapter can leave
+      # behind), so deleting it and letting `db:prepare` recreate the schema is simpler and faster
+      # than a migration-aware reset for a database this job never needs to preserve between runs.
       - name: Boot the standalone host on port 3003
         run: |
           # SELF-HOSTED RUNNERS ARE PERSISTENT: a previous run's server can still be listening if
@@ -90,6 +105,7 @@ jobs:
           fi
 
           cd host
+          rm -f storage/development.sqlite3 storage/development.sqlite3-shm storage/development.sqlite3-wal
           bin/rails db:prepare
 
           EMAIL="conformance-ci-${{ github.run_id }}-${{ github.run_attempt }}@tinkerex-sync.test"
@@ -105,7 +121,16 @@ jobs:
           # comment exactly. Backgrounded and detached from this step's own shell so it stays up
           # for the steps that follow; /tmp/conformance-host.log is what the readiness-wait step
           # dumps if the host never comes up.
-          STORAGE_BACKEND=local bin/rails server -p 3003 > /tmp/conformance-host.log 2>&1 &
+          #
+          # SYNC_ADMIN_TOKEN IS A FIXED TEST FIXTURE, NOT A SECRET -- it authenticates nothing but
+          # this ephemeral, 127.0.0.1-bound, killed-at-the-end-of-this-job server, and its literal
+          # value is already checked into conformance/scenarios/11-admin.yml (the corpus format has
+          # no way to inject a per-run value into a request body, so the token has to be a value
+          # both this boot and that file agree on ahead of time). It does not belong in
+          # .kamal/secrets -- §14g's per-destination secrets rule is about credentials that guard a
+          # real deployment, and this is neither.
+          SYNC_ADMIN_TOKEN=conformance-corpus-admin-token \
+            STORAGE_BACKEND=local bin/rails server -p 3003 > /tmp/conformance-host.log 2>&1 &
 
           {
             echo "SYNC_SERVER_URL=http://127.0.0.1:3003"

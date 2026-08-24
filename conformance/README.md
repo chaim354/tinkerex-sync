@@ -1,6 +1,6 @@
 # The conformance corpus
 
-This repository is a standalone sync server exposing a 25-endpoint v1 HTTP API
+This repository is a standalone sync server exposing a 26-endpoint v1 HTTP API
 (`Sync.draw_v1_routes` — see `lib/tinkerex_sync/v1_routes.rb`; count it yourself with the
 verification command at the end of this document). It is destined to be rewritten in Rust. `conformance/`
 exists so that rewrite can be graded against something other than "port the Ruby tests," which
@@ -28,8 +28,9 @@ conformance/
   scenarios/
     01-enrolment.yml
     02-commit.yml
-    ...              ten scenario files today, run in filename order (see "Execution semantics" below)
+    ...              eleven scenario files today, run in filename order (see "Execution semantics" below)
     10-share-links.yml
+    11-admin.yml
 
 bin/conformance-record    records a scenario's expected responses from a real, running server
 test/conformance_test.rb  the verifier -- replays every scenario against SYNC_SERVER_URL and checks it
@@ -133,7 +134,7 @@ steps:
       method: GET | POST | PUT | DELETE
       path: <string>
       query: {...}         # optional
-      body: {...}          # optional, any shape -- 25 endpoints, 25 different bodies
+      body: {...}          # optional, any shape -- 26 endpoints, 26 different bodies
       headers: {...}        # optional, extra headers beyond the runner's own defaults
     expect:
       status: <integer>
@@ -176,13 +177,13 @@ HTTP error against a live server three steps later.
    caught before a single request goes out.
 
 **`request.query`** and **`request.body`** are otherwise unconstrained by the schema beyond basic
-JSON types — 25 endpoints, 25 different bodies, and this format does not attempt a per-endpoint
+JSON types — 26 endpoints, 26 different bodies, and this format does not attempt a per-endpoint
 shape (that's what `docs/sync-protocol.md` is for). String values inside either may contain
 `{{name}}` placeholders.
 
 **How `request.body` gets serialized onto the wire depends on its own shape, and getting this
 wrong silently corrupts bytes rather than raising anything.** An object or array body is
-JSON-encoded, with `Content-Type: application/json` — this is 24 of the 25 endpoints. A **bare
+JSON-encoded, with `Content-Type: application/json` — this is 25 of the 26 endpoints. A **bare
 string** body (`body: drawing bytes`, YAML for a plain scalar string, not an object) is sent
 **verbatim, byte for byte, with no JSON encoding at all**, and `Content-Type:
 application/octet-stream` — this is the one shape used for the two presigned chunk-blob `PUT`
@@ -372,9 +373,12 @@ verifier create a *fresh* binding table per scenario file (`bin/conformance-reco
 `Conformance::Matcher` inside the method that runs one file). A `$ref` can only resolve a name
 captured earlier in the *same* file — never in an earlier file. This is worth stating precisely
 because it would be easy to guess the opposite from "one continuous session": checking every
-`$capture`/`$ref` name across all ten files today confirms every `$ref` is satisfied within its own
-file, with zero cross-file references. What actually carries state from an earlier file into a
-later one is **the server's own data**, not the runner's in-memory bindings: `05-trash.yml`
+`$capture`/`$ref` name across all eleven files today confirms every `$ref` is satisfied within its
+own file, with zero cross-file references (`11-admin.yml` uses neither at all — its one value
+worth asserting beyond a bare `$type`, the admin token, is a fixed literal both sides already
+agree on, never a value only a live response can supply). What actually carries state from an
+earlier file into a later one is **the server's own data**, not the runner's in-memory bindings:
+`05-trash.yml`
 restores the exact tombstoned node ids `04-nodes.yml` minted, but it does so with the same
 structurally-obvious, human-chosen literal UUID (`00000000-0000-4000-8000-000000004001`, etc.) —
 copied by the human who wrote the file, not threaded through any binding. A fresh implementation
@@ -390,33 +394,49 @@ of running the corpus — it's a different, unsupported thing to do, and running
 before `04-nodes.yml` (verified by deliberately doing it) turns a clean restore into a 404, on a
 corpus where every individual file is otherwise correct.
 
-**The corpus is agnostic to the split between "the sync engine's own 25 routes" and the two
+**The corpus is agnostic to the split between "the sync engine's own 26 routes" and the two
 device-auth routes this repository's `host/` supplies on top of them** (`POST /v1/devices`,
 `GET /v1/devices/whoami` — see the root `README.md`'s "What the host must supply"). The corpus
 doesn't know or care about that boundary: it replays plain HTTP against one base URL, and
 `01-enrolment.yml`, `04-nodes.yml`, `07-conflicts.yml`, and `08-locks.yml` all exercise the two
 device routes directly, with their own pinned expectations, right alongside `Sync.draw_v1_routes`'s
-25. A server being graded against this corpus needs working, shape-compatible answers for all 27
-routes the corpus actually calls — not just the 25 that belong to the engine by this repository's
-own internal accounting. How a from-scratch implementation chooses to authenticate a device is its
-own business; what it returns from those two endpoints needs to match what's recorded.
+26 (11-admin.yml's own route, POST /v1/admin/libraries, is one of those 26 — it is drawn by
+`Sync.draw_v1_routes` too, gated by a distinct SYNC_ADMIN_TOKEN rather than a device token; see
+`app/controllers/sync/v1/admin/libraries_controller.rb`). A server being graded against this corpus
+needs working, shape-compatible answers for all 28 routes the corpus actually calls — not just the
+26 that belong to the engine by this repository's own internal accounting. How a from-scratch
+implementation chooses to authenticate a device is its own business; what it returns from those two
+endpoints needs to match what's recorded.
 
 ## Running it
 
 ### Against the Ruby reference server
 
 This is exactly what `.github/workflows/ci.yml`'s `conformance` job does, and exactly what was run
-to verify this document (2026-08-24). `host/storage/development.sqlite3` is an ordinary, persistent
-dev database — it is not reset between runs — but that doesn't matter here: `sync:device:issue`
-mints a brand-new user each time, so the result below reflects one clean run and is reproducible
-regardless of what else already lives in that database:
+to verify this document (2026-08-24). `host/storage/development.sqlite3` is an ordinary dev
+database. For nine of the ten original scenario files it never mattered whether it was reset
+between runs — `sync:device:issue` mints a brand-new user each time, so those results are
+reproducible regardless of what else already lives in that database. **`11-admin.yml` changed
+that**: it provisions a second user through `POST /v1/admin/libraries` with a fixed, checked-in
+email (nothing in the conformance wire format lets a scenario file interpolate a per-run value into
+a request body, so unlike the bootstrap device's email above, this one has to be a literal both the
+recording run and every later replay agree on), and its first successful step expects `201` —
+which only the *first* run against a given database will ever get, `409` (`email_taken`) on every
+run after. So a genuinely fresh database is now part of reproducing the result below; the CI job
+wipes `host/storage/development.sqlite3` for exactly this reason (see its own comment):
 
 ```sh
 cd host
+rm -f storage/development.sqlite3 storage/development.sqlite3-shm storage/development.sqlite3-wal
 bin/rails db:prepare
 EMAIL=you@example.com bin/rails sync:device:issue   # prints a device token, once
-STORAGE_BACKEND=local bin/rails server -p 3003 &
+SYNC_ADMIN_TOKEN=conformance-corpus-admin-token STORAGE_BACKEND=local bin/rails server -p 3003 &
 ```
+
+`SYNC_ADMIN_TOKEN` above must be exactly `conformance-corpus-admin-token` — that literal is what
+`11-admin.yml` sends as its admin credential, checked in for the same reason its fixture email is
+(see that file's own `description`). It is a fixed test fixture, not a secret: it authenticates
+nothing but this disposable, localhost-only server.
 
 Then, from the repository root:
 
@@ -425,15 +445,16 @@ SYNC_SERVER_URL=http://127.0.0.1:3003 SYNC_DEVICE_TOKEN=<token printed above> \
   bundle exec ruby -Itest test/conformance_test.rb
 ```
 
-Verified output, run against a freshly-issued device:
+Verified output, run against a freshly-issued device on a freshly-created database (2026-08-24):
 
 ```
-12 runs, 157 assertions, 0 failures, 0 errors, 0 skips
+13 runs, 163 assertions, 0 failures, 0 errors, 0 skips
 ```
 
-(Ten of those runs are one per scenario file; the other two are fixed, server-independent checks —
-"the corpus has at least one scenario file," and "every route `Sync.draw_v1_routes` defines is
-exercised by at least one scenario," described further under "What this corpus does not cover.")
+(Eleven of those runs are one per scenario file; the other two are fixed, server-independent
+checks — "the corpus has at least one scenario file," and "every route `Sync.draw_v1_routes`
+defines is exercised by at least one scenario," described further under "What this corpus does not
+cover.")
 
 `test/conformance_test.rb` is an ordinary Minitest file, so it also runs as part of plain `bundle
 exec rake test` — but with no `SYNC_SERVER_URL` set, every per-scenario test **skips** rather than
@@ -455,11 +476,16 @@ SYNC_SERVER_URL=http://127.0.0.1:<your port> SYNC_DEVICE_TOKEN=<a token your ser
 ```
 
 Your server needs to be reachable over plain HTTP, needs some way to mint a bearer device token a
-caller presents as `Authorization: Bearer <token>`, and needs to answer all 27 routes the corpus
+caller presents as `Authorization: Bearer <token>`, and needs to answer all 28 routes the corpus
 actually calls (see "Execution semantics" above) in a way that satisfies each step's recorded
 `expect:`. It does not need to reuse this repository's specific device-issuance mechanism
 (`bin/rails sync:device:issue`, or `POST /v1/devices` from an already-authenticated device) — only
-to produce a token the corpus can use the same way.
+to produce a token the corpus can use the same way. One route needs a SECOND, DIFFERENT credential:
+`11-admin.yml`'s `POST /v1/admin/libraries` steps authenticate with a fixed literal
+(`conformance-corpus-admin-token`, checked in for the reason that file's own `description`
+explains), never a device token — your server needs to be configurable to accept that exact value
+as its admin credential, or the recording could not have been reproduced against it in the first
+place.
 
 **The user behind that token must be genuinely fresh — zero prior history — or the very first
 assertion in the corpus fails for a reason that has nothing to do with your server.**
@@ -627,8 +653,8 @@ wire conformance for the exchanges this corpus actually recorded — not general
 not exhaustive endpoint coverage.**
 
 - **The coverage check proves reachability, not thoroughness.** `test/conformance_test.rb` draws
-  `Sync.draw_v1_routes` into a throwaway route set and asserts every one of its 25 routes is hit by
-  at least one scenario step somewhere in the corpus — today, all 25 are (`COVERAGE_EXCEPTIONS`, the
+  `Sync.draw_v1_routes` into a throwaway route set and asserts every one of its 26 routes is hit by
+  at least one scenario step somewhere in the corpus — today, all 26 are (`COVERAGE_EXCEPTIONS`, the
   named-and-reasoned escape hatch for a route that can't reasonably be exercised, is empty). But
   "exercised by at least one step" says nothing about how many of an endpoint's status codes,
   branches, or edge cases are pinned. `POST /v1/commit`'s missing-chunk path, dedup path, and

@@ -1,0 +1,356 @@
+---
+name: 06-tree-search
+description: 'GET /v1/tree (the initial-sync snapshot) and GET /v1/search (name/path
+  substring search). Tree pagination is proven the same way 03-changes.yml proves
+  changelog pagination: a baseline read (after_id=0, a limit comfortably above this
+  user''s total node count so far) captures next_after_id as a cursor WITHOUT asserting
+  the nodes earlier scenario files left behind, then this file''s own three new nodes
+  (a dir, a symlink inside it, and a file inside it) are read back both as one page
+  (after_id=<baseline>) and split across three one-node pages (after_id=<previous
+  next_after_id>, limit=1) to pin the cursor semantics precisely. Search is proven
+  against the same three nodes plus a fourth, tombstoned file: a basename substring
+  match, a path substring match against the dir name (which also matches its two descendants,
+  proving the match is against the full path, not just the basename), the default
+  exclusion of a tombstoned node from a name match, the include_deleted=true override
+  that finds it anyway, and the empty-query refusal (q="" answers {results: []} rather
+  than dumping the tree -- Sync::Search treats a blank query as "nothing", never "everything").
+  Node ids below follow 04-nodes.yml''s own structured-id convention (00000000-0000-4000-8000-00000000NNNN,
+  easier to audit by eye than a random UUID) with ''6'' as this file''s own leading
+  digit, so a reader can tell which scenario file minted a given id at a glance.'
+steps:
+- name: baseline -- the current tree snapshot cursor, without asserting what earlier
+    scenario files left in it (limit is comfortably above this user's total node count
+    so far)
+  request:
+    method: GET
+    path: "/v1/tree"
+    query:
+      after_id: 0
+      limit: 5000
+  expect:
+    status: 200
+    body:
+      head_seq:
+        "$type": integer
+      next_after_id:
+        "$capture": tree_baseline_after_id
+      nodes:
+        "$type": array
+- name: mkdir TreeDemo at the root -- the first node this file adds
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 00000000-0000-4000-8000-000000006001
+      parent_node_id:
+      name: TreeDemo
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-000000006001
+      seq:
+        "$type": integer
+- name: create a symlink inside TreeDemo -- the second node
+  request:
+    method: POST
+    path: "/v1/nodes/symlink"
+    body:
+      node_id: 00000000-0000-4000-8000-000000006002
+      parent_node_id: 00000000-0000-4000-8000-000000006001
+      name: link-to-elsewhere
+      symlink_target: Li4vc2hhcmVkL29yaWdpbmFsLnN0bA==
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-000000006002
+      seq:
+        "$type": integer
+- name: begin a commit for hello.txt inside TreeDemo -- the third node
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000006004
+      node_id: 00000000-0000-4000-8000-000000006003
+      parent_node_id: 00000000-0000-4000-8000-000000006001
+      name: hello.txt
+      base_version_id:
+      size: 19
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000006005'
+        offset: 0
+        length: 19
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000006004
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000006005'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000006005':
+          "$capture": hello_put_url
+- name: upload hello.txt's chunk bytes
+  request:
+    method: PUT
+    path: "{{hello_put_url}}"
+    body: hello from the tree
+  expect:
+    status: 200
+- name: finalize hello.txt
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000006004/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$capture": hello_seq
+      version_id:
+        "$capture": hello_version_id
+- name: the whole page since the baseline -- exactly this file's three new nodes,
+    in creation (id) order, nothing from any earlier scenario file
+  request:
+    method: GET
+    path: "/v1/tree"
+    query:
+      after_id: "{{tree_baseline_after_id}}"
+      limit: 5000
+  expect:
+    status: 200
+    body:
+      head_seq:
+        "$ref": hello_seq
+      next_after_id:
+        "$type": integer
+      nodes:
+      - kind: dir
+        mode: 493
+        mtime:
+        name: TreeDemo
+        node_id: 00000000-0000-4000-8000-000000006001
+        parent_node_id:
+      - kind: symlink
+        mode: 511
+        mtime:
+        name: link-to-elsewhere
+        node_id: 00000000-0000-4000-8000-000000006002
+        parent_node_id: 00000000-0000-4000-8000-000000006001
+        symlink_target: Li4vc2hhcmVkL29yaWdpbmFsLnN0bA==
+      - kind: file
+        manifest:
+        - hash: '0000000000000000000000000000000000000000000000000000000000006005'
+          length: 19
+          offset: 0
+        mode: 420
+        mtime:
+        name: hello.txt
+        node_id: 00000000-0000-4000-8000-000000006003
+        parent_node_id: 00000000-0000-4000-8000-000000006001
+        size: 19
+        version_id:
+          "$ref": hello_version_id
+- name: page 1 of that same range, limit 1 -- TreeDemo alone
+  request:
+    method: GET
+    path: "/v1/tree"
+    query:
+      after_id: "{{tree_baseline_after_id}}"
+      limit: 1
+  expect:
+    status: 200
+    body:
+      head_seq:
+        "$ref": hello_seq
+      next_after_id:
+        "$capture": tree_page1_after_id
+      nodes:
+      - kind: dir
+        mode: 493
+        mtime:
+        name: TreeDemo
+        node_id: 00000000-0000-4000-8000-000000006001
+        parent_node_id:
+- name: page 2, after page 1's own cursor, limit 1 -- the symlink alone
+  request:
+    method: GET
+    path: "/v1/tree"
+    query:
+      after_id: "{{tree_page1_after_id}}"
+      limit: 1
+  expect:
+    status: 200
+    body:
+      head_seq:
+        "$ref": hello_seq
+      next_after_id:
+        "$capture": tree_page2_after_id
+      nodes:
+      - kind: symlink
+        mode: 511
+        mtime:
+        name: link-to-elsewhere
+        node_id: 00000000-0000-4000-8000-000000006002
+        parent_node_id: 00000000-0000-4000-8000-000000006001
+        symlink_target: Li4vc2hhcmVkL29yaWdpbmFsLnN0bA==
+- name: page 3, after page 2's own cursor, limit 1 -- hello.txt alone, exhausting
+    this file's own range
+  request:
+    method: GET
+    path: "/v1/tree"
+    query:
+      after_id: "{{tree_page2_after_id}}"
+      limit: 1
+  expect:
+    status: 200
+    body:
+      head_seq:
+        "$ref": hello_seq
+      next_after_id:
+        "$type": integer
+      nodes:
+      - kind: file
+        manifest:
+        - hash: '0000000000000000000000000000000000000000000000000000000000006005'
+          length: 19
+          offset: 0
+        mode: 420
+        mtime:
+        name: hello.txt
+        node_id: 00000000-0000-4000-8000-000000006003
+        parent_node_id: 00000000-0000-4000-8000-000000006001
+        size: 19
+        version_id:
+          "$ref": hello_version_id
+- name: begin a commit for SearchDeleted.txt at the root -- created only to be tombstoned,
+    so the include_deleted search flag has something real to find
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000006007
+      node_id: 00000000-0000-4000-8000-000000006006
+      parent_node_id:
+      name: SearchDeleted.txt
+      base_version_id:
+      size: 16
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000006008'
+        offset: 0
+        length: 16
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000006007
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000006008'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000006008':
+          "$capture": search_deleted_put_url
+- name: upload SearchDeleted.txt's chunk bytes
+  request:
+    method: PUT
+    path: "{{search_deleted_put_url}}"
+    body: please delete me
+  expect:
+    status: 200
+- name: finalize SearchDeleted.txt
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000006007/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: delete SearchDeleted.txt -- tombstoned, so it must be excluded from search
+    by default
+  request:
+    method: DELETE
+    path: "/v1/nodes/00000000-0000-4000-8000-000000006006"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: search for a basename substring -- matches hello.txt by its full path, not
+    merely its basename (Sync::Search matches the whole reconstructed path)
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: hello
+  expect:
+    status: 200
+    body:
+      results:
+      - kind: file
+        name: hello.txt
+        node_id: 00000000-0000-4000-8000-000000006003
+        path: "/TreeDemo/hello.txt"
+        size: 19
+- name: search for the dir's own name -- matches the dir AND both its descendants,
+    because the match is against LOWER(path) LIKE, not just the basename; results
+    are path-ordered
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: treedemo
+  expect:
+    status: 200
+    body:
+      results:
+      - kind: dir
+        name: TreeDemo
+        node_id: 00000000-0000-4000-8000-000000006001
+        path: "/TreeDemo"
+        size:
+      - kind: file
+        name: hello.txt
+        node_id: 00000000-0000-4000-8000-000000006003
+        path: "/TreeDemo/hello.txt"
+        size: 19
+      - kind: symlink
+        name: link-to-elsewhere
+        node_id: 00000000-0000-4000-8000-000000006002
+        path: "/TreeDemo/link-to-elsewhere"
+        size:
+- name: search for the tombstoned file's name WITHOUT include_deleted -- excluded
+    by default
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: SearchDeleted
+  expect:
+    status: 200
+    body:
+      results: []
+- name: the same search WITH include_deleted=true -- finds it
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: SearchDeleted
+      include_deleted: true
+  expect:
+    status: 200
+    body:
+      results:
+      - kind: file
+        name: SearchDeleted.txt
+        node_id: 00000000-0000-4000-8000-000000006006
+        path: "/SearchDeleted.txt"
+        size: 16
+- name: an empty query is refused (answers no results), never treated as "match everything"
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: ''
+  expect:
+    status: 200
+    body:
+      results: []

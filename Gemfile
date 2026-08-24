@@ -14,3 +14,11 @@ gem "sqlite3"        # test/dummy and host/ both use it
 # app without ever serving HTTP. Found by starting it.
 gem "puma"
 gem "debug", require: false, group: %i[development test]
+
+# conformance/schema.json validation (test/conformance_test.rb, Task 3) -- MIT, and its own
+# runtime deps are three small MIT gems (hana, regexp_parser, simpleidn) plus bigdecimal, already
+# in this bundle via Rails; checked directly against each fetched .gem's own gemspec, not assumed.
+# The schema itself declares draft 2020-12, which this is the one maintained Ruby gem supporting.
+# Not a runtime dependency of the gem itself, so it stays out of the gemspec (same reasoning as
+# sqlite3/puma/debug above).
+gem "json_schemer", require: false, group: %i[development test]

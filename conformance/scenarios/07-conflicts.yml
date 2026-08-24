@@ -1,0 +1,645 @@
+---
+name: 07-conflicts
+description: 'GET /v1/conflicts (the list a "which version is current?" prompt reads)
+  and both branches of POST /v1/nodes/:id/resolve_conflict -- keep and split -- against
+  two files. sync-note.md reproduces 04-nodes.yml''s own conflict recipe (device A
+  commits v1, then v2 based on v1 -- a clean same-device fast-forward -- then device
+  B commits v3 also based on v1, which is now STALE relative to the real current version
+  v2, so it becomes a conflict rather than silently overwriting) so GET /v1/conflicts
+  has something real to list before it is touched, and resolves it by keeping the
+  ORIGINAL (current) side rather than the incoming one -- the branch 04-nodes.yml
+  did not exercise, which kept the incoming side. This file also pins the two hard
+  parts CLAUDE.md''s own plan calls out: finalizing the conflicting commit (device
+  B''s v3) answers the IDENTICAL {version_id, seq} shape a clean put would -- nothing
+  in that response says "conflict" -- so the only place to actually SEE the distinction
+  is GET /v1/changes, where a `conflict` entry carries no `version`/`manifest` key
+  at all (both explicitly absent) while the `put` entry the resolution later appends
+  carries both; and device identity for the conflict check is fixed at the BEGIN step,
+  not finalize -- device B''s begin uses its own bearer token, but its finalize is
+  sent with device A''s (any authenticated device of this user may finalize a commit
+  someone else began), exactly as 04-nodes.yml''s own last conflict step already showed.
+  triple.txt goes further: a SECOND divergent commit (device C, also based on the
+  pre-conflict version) proves conflicts are N-WAY, not 2-way -- GET /v1/conflicts
+  lists TWO rows for the one node (one current/incoming pair per divergent side, never
+  merged), and `resolve_conflict {split: true}` keeps the node at its current version
+  and turns EACH divergent side into its own new sibling FILE, reusing its manifest
+  rather than re-uploading (proven by capturing each losing version''s manifest_id
+  from GET .../versions BEFORE the split, then asserting each new sibling''s own single
+  version references that SAME manifest_id afterward -- its version_id is a fresh
+  UUID, never reused, only the manifest is). The sibling''s own generated NAME embeds
+  the resolving timestamp ("<name> (conflict from <device> <YYYY-MM-DD HHMM>)<ext>",
+  Sync::Conflicts .conflicted_name) and is therefore not reproducible on replay, so
+  this file deliberately never reads a sibling''s name back (no /v1/tree or /v1/search
+  call touches it) -- only its own versions, which carry no such field. Node ids continue
+  the corpus''s structured-id convention with ''7'' as this file''s leading digit.'
+steps:
+- name: begin sync-note.md's first version, as device A (the bootstrap credential)
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007002
+      node_id: 00000000-0000-4000-8000-000000007001
+      parent_node_id:
+      name: sync-note.md
+      base_version_id:
+      size: 12
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000007003'
+        offset: 0
+        length: 12
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007002
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000007003'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000007003':
+          "$capture": note_v1_put_url
+- name: upload sync-note.md's first-version chunk bytes
+  request:
+    method: PUT
+    path: "{{note_v1_put_url}}"
+    body: revision one
+  expect:
+    status: 200
+- name: finalize sync-note.md's first version
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000007002/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": note_v1_version_id
+- name: begin sync-note.md's second version, still device A -- a clean same-device
+    fast-forward, so this becomes the node's current version
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007004
+      node_id: 00000000-0000-4000-8000-000000007001
+      parent_node_id:
+      name: sync-note.md
+      base_version_id: "{{note_v1_version_id}}"
+      size: 24
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000007005'
+        offset: 0
+        length: 24
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007004
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000007005'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000007005':
+          "$capture": note_v2_put_url
+- name: upload sync-note.md's second-version chunk bytes
+  request:
+    method: PUT
+    path: "{{note_v2_put_url}}"
+    body: revision two same device
+  expect:
+    status: 200
+- name: finalize sync-note.md's second version -- a clean fast-forward
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000007004/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$capture": note_v2_seq
+      version_id:
+        "$capture": note_v2_version_id
+- name: enrol a second device, specifically to author a conflicting commit as a different
+    device
+  request:
+    method: POST
+    path: "/v1/devices"
+    body:
+      name: conformance-07-device-b
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$type": integer
+      device_token:
+        "$capture": device_b_token
+- name: begin sync-note.md's third version AS DEVICE B, based on the FIRST version
+    -- stale relative to the real current (the second version)
+  request:
+    method: POST
+    path: "/v1/commit"
+    headers:
+      Authorization: Bearer {{device_b_token}}
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007006
+      node_id: 00000000-0000-4000-8000-000000007001
+      parent_node_id:
+      name: sync-note.md
+      base_version_id: "{{note_v1_version_id}}"
+      size: 26
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000007007'
+        offset: 0
+        length: 26
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007006
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000007007'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000007007':
+          "$capture": note_v3_put_url
+- name: upload sync-note.md's third-version chunk bytes
+  request:
+    method: PUT
+    path: "{{note_v3_put_url}}"
+    body: device bs conflicting edit
+  expect:
+    status: 200
+- name: finalize sync-note.md's third version -- device A's own credential is fine
+    here; device identity for the conflict check was already fixed at begin time.
+    The response shape is IDENTICAL to a clean put's -- nothing here says "conflict"
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000007006/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$capture": note_v3_seq
+      version_id:
+        "$capture": note_v3_version_id
+- name: GET /v1/conflicts lists exactly the one open conflict, both sides' device/size/time
+  request:
+    method: GET
+    path: "/v1/conflicts"
+  expect:
+    status: 200
+    body:
+      conflicts:
+      - current:
+          created_at:
+            "$type": string
+          device_name: device
+          size: 24
+          version_id:
+            "$ref": note_v2_version_id
+        incoming:
+          created_at:
+            "$type": string
+          device_name: conformance-07-device-b
+          size: 26
+          version_id:
+            "$ref": note_v3_version_id
+        name: sync-note.md
+        node_id: 00000000-0000-4000-8000-000000007001
+- name: GET /v1/changes since sync-note's own pre-conflict seq -- exactly the conflict
+    entry, carrying no version or manifest at all (contrast the put entry two steps
+    from now)
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: "{{note_v2_seq}}"
+      limit: 10
+  expect:
+    status: 200
+    body:
+      changes:
+      - manifest:
+          "$absent": true
+        node:
+          deleted: false
+          kind: file
+          mode: 420
+          mtime:
+          name: sync-note.md
+          node_id: 00000000-0000-4000-8000-000000007001
+          parent_node_id:
+        node_id: 00000000-0000-4000-8000-000000007001
+        op: conflict
+        seq:
+          "$ref": note_v3_seq
+        version:
+          "$absent": true
+      head_seq:
+        "$ref": note_v3_seq
+      oldest_seq:
+        "$type": integer
+- name: resolve sync-note.md's conflict -- keep the ORIGINAL (current, device A) version,
+    discarding device B's incoming one. 04-nodes.yml's own conflict kept the incoming
+    side instead; this is the other branch
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000007001/resolve_conflict"
+    body:
+      keep_version_id: "{{note_v2_version_id}}"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$capture": resolve_note_seq
+- name: GET /v1/conflicts is empty again -- resolved
+  request:
+    method: GET
+    path: "/v1/conflicts"
+  expect:
+    status: 200
+    body:
+      conflicts: []
+- name: the same changes page now shows a second entry -- the resolution's own put,
+    which DOES carry version and manifest, unlike the conflict entry above it
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: "{{note_v2_seq}}"
+      limit: 10
+  expect:
+    status: 200
+    body:
+      changes:
+      - manifest:
+          "$absent": true
+        node:
+          deleted: false
+          kind: file
+          mode: 420
+          mtime:
+          name: sync-note.md
+          node_id: 00000000-0000-4000-8000-000000007001
+          parent_node_id:
+        node_id: 00000000-0000-4000-8000-000000007001
+        op: conflict
+        seq:
+          "$ref": note_v3_seq
+        version:
+          "$absent": true
+      - manifest:
+        - hash: '0000000000000000000000000000000000000000000000000000000000007005'
+          length: 24
+          offset: 0
+        node:
+          deleted: false
+          kind: file
+          mode: 420
+          mtime:
+          name: sync-note.md
+          node_id: 00000000-0000-4000-8000-000000007001
+          parent_node_id:
+        node_id: 00000000-0000-4000-8000-000000007001
+        op: put
+        seq:
+          "$ref": resolve_note_seq
+        version:
+          manifest_id:
+            "$type": string
+          size: 24
+          version_id:
+            "$ref": note_v2_version_id
+      head_seq:
+        "$ref": resolve_note_seq
+      oldest_seq:
+        "$type": integer
+- name: begin triple.txt's first version, as device A
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007011
+      node_id: 00000000-0000-4000-8000-000000007010
+      parent_node_id:
+      name: triple.txt
+      base_version_id:
+      size: 11
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000007012'
+        offset: 0
+        length: 11
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007011
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000007012'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000007012':
+          "$capture": triple_v1_put_url
+- name: upload triple.txt's first-version chunk bytes
+  request:
+    method: PUT
+    path: "{{triple_v1_put_url}}"
+    body: triple base
+  expect:
+    status: 200
+- name: finalize triple.txt's first version
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000007011/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": triple_v1_version_id
+- name: begin triple.txt's second version, still device A -- a clean fast-forward,
+    becomes current
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007013
+      node_id: 00000000-0000-4000-8000-000000007010
+      parent_node_id:
+      name: triple.txt
+      base_version_id: "{{triple_v1_version_id}}"
+      size: 19
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000007014'
+        offset: 0
+        length: 19
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007013
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000007014'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000007014':
+          "$capture": triple_vmid_put_url
+- name: upload triple.txt's second-version chunk bytes
+  request:
+    method: PUT
+    path: "{{triple_vmid_put_url}}"
+    body: triple second clean
+  expect:
+    status: 200
+- name: finalize triple.txt's second version -- a clean fast-forward
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000007013/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": triple_vmid_version_id
+- name: enrol a third device -- N-way needs a second divergent side beside device
+    B's
+  request:
+    method: POST
+    path: "/v1/devices"
+    body:
+      name: conformance-07-device-c
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$type": integer
+      device_token:
+        "$capture": device_c_token
+- name: begin triple.txt's third version AS DEVICE B, based on the FIRST version --
+    stale, the first divergent side
+  request:
+    method: POST
+    path: "/v1/commit"
+    headers:
+      Authorization: Bearer {{device_b_token}}
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007015
+      node_id: 00000000-0000-4000-8000-000000007010
+      parent_node_id:
+      name: triple.txt
+      base_version_id: "{{triple_v1_version_id}}"
+      size: 20
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000007016'
+        offset: 0
+        length: 20
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007015
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000007016'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000007016':
+          "$capture": triple_b_put_url
+- name: upload triple.txt's device-B chunk bytes
+  request:
+    method: PUT
+    path: "{{triple_b_put_url}}"
+    body: triple from device b
+  expect:
+    status: 200
+- name: finalize triple.txt's device-B version
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000007015/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": triple_b_version_id
+- name: begin triple.txt's fourth version AS DEVICE C, ALSO based on the FIRST version
+    -- stale, the second divergent side
+  request:
+    method: POST
+    path: "/v1/commit"
+    headers:
+      Authorization: Bearer {{device_c_token}}
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007017
+      node_id: 00000000-0000-4000-8000-000000007010
+      parent_node_id:
+      name: triple.txt
+      base_version_id: "{{triple_v1_version_id}}"
+      size: 20
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000007018'
+        offset: 0
+        length: 20
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000007017
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000007018'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000007018':
+          "$capture": triple_c_put_url
+- name: upload triple.txt's device-C chunk bytes
+  request:
+    method: PUT
+    path: "{{triple_c_put_url}}"
+    body: triple from device c
+  expect:
+    status: 200
+- name: finalize triple.txt's device-C version
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000007017/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": triple_c_version_id
+- name: GET /v1/conflicts lists TWO rows for this one node -- N-way, never merged
+    into one entry
+  request:
+    method: GET
+    path: "/v1/conflicts"
+  expect:
+    status: 200
+    body:
+      conflicts:
+      - current:
+          created_at:
+            "$type": string
+          device_name: device
+          size: 19
+          version_id:
+            "$ref": triple_vmid_version_id
+        incoming:
+          created_at:
+            "$type": string
+          device_name: conformance-07-device-b
+          size: 20
+          version_id:
+            "$ref": triple_b_version_id
+        name: triple.txt
+        node_id: 00000000-0000-4000-8000-000000007010
+      - current:
+          created_at:
+            "$type": string
+          device_name: device
+          size: 19
+          version_id:
+            "$ref": triple_vmid_version_id
+        incoming:
+          created_at:
+            "$type": string
+          device_name: conformance-07-device-c
+          size: 20
+          version_id:
+            "$ref": triple_c_version_id
+        name: triple.txt
+        node_id: 00000000-0000-4000-8000-000000007010
+- name: GET .../versions BEFORE splitting -- captures each losing side's manifest_id,
+    so the split siblings' reuse of it can be proven afterward
+  request:
+    method: GET
+    path: "/v1/nodes/00000000-0000-4000-8000-000000007010/versions"
+  expect:
+    status: 200
+    body:
+      versions:
+      - created_at:
+          "$type": string
+        manifest_id:
+          "$capture": triple_c_manifest_id
+        parent_version_id:
+          "$ref": triple_v1_version_id
+        size: 20
+        version_id:
+          "$ref": triple_c_version_id
+      - created_at:
+          "$type": string
+        manifest_id:
+          "$capture": triple_b_manifest_id
+        parent_version_id:
+          "$ref": triple_v1_version_id
+        size: 20
+        version_id:
+          "$ref": triple_b_version_id
+      - created_at:
+          "$type": string
+        manifest_id:
+          "$type": string
+        parent_version_id:
+          "$ref": triple_v1_version_id
+        size: 19
+        version_id:
+          "$ref": triple_vmid_version_id
+      - created_at:
+          "$type": string
+        manifest_id:
+          "$type": string
+        parent_version_id:
+        size: 11
+        version_id:
+          "$ref": triple_v1_version_id
+- name: split triple.txt's conflict -- the node stays on its current version; EACH
+    divergent side becomes its own new sibling file
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000007010/resolve_conflict"
+    body:
+      split: true
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      split_node_id:
+        "$capture": triple_sibling_b
+      split_node_ids:
+      - "$ref": triple_sibling_b
+      - "$capture": triple_sibling_c
+- name: GET /v1/conflicts is empty again -- both rows resolved by the one split call
+  request:
+    method: GET
+    path: "/v1/conflicts"
+  expect:
+    status: 200
+    body:
+      conflicts: []
+- name: the device-B sibling has exactly one version, referencing the SAME manifest_id
+    captured before the split -- reused, not re-uploaded
+  request:
+    method: GET
+    path: "/v1/nodes/{{triple_sibling_b}}/versions"
+  expect:
+    status: 200
+    body:
+      versions:
+      - created_at:
+          "$type": string
+        manifest_id:
+          "$ref": triple_b_manifest_id
+        parent_version_id:
+        size: 20
+        version_id:
+          "$type": string
+- name: the device-C sibling likewise
+  request:
+    method: GET
+    path: "/v1/nodes/{{triple_sibling_c}}/versions"
+  expect:
+    status: 200
+    body:
+      versions:
+      - created_at:
+          "$type": string
+        manifest_id:
+          "$ref": triple_c_manifest_id
+        parent_version_id:
+        size: 20
+        version_id:
+          "$type": string

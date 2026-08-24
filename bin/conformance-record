@@ -1,0 +1,379 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# RECORDS A CONFORMANCE SCENARIO'S EXPECTED RESPONSES FROM A REAL, RUNNING SERVER.
+#
+#   bin/conformance-record [--force] SCENARIO.yml [SCENARIO.yml ...]
+#
+#   SYNC_SERVER_URL=http://127.0.0.1:3003 SYNC_DEVICE_TOKEN=<token> \
+#     bin/conformance-record conformance/scenarios/01-enrolment.yml
+#
+# THE RULE THIS TOOL EXISTS TO ENFORCE: a human authors the REQUEST half of a scenario (method,
+# path, query, body -- see conformance/schema.json); this tool fills in the RESPONSE half from
+# whatever a real server actually says. Never hand-write an expected body. Expectations written by
+# the same mind that wrote the implementation agree with the implementation, including where the
+# implementation is wrong -- that is exactly how the tinkerex monorepo once shipped 79 green tests
+# over silent data loss: FakeS3 decoded `copy_source` with CGI.unescape while the real adapter
+# encoded with CGI.escape, exact inverses, so nothing ever disagreed (CLAUDE.md §14e there;
+# conformance/runner.rb's header comment restates it here). This file is the one place allowed to
+# author `expect:` bodies mechanically -- everywhere else, an `expect:` in this corpus was typed
+# by a person who read a real response and decided it was correct.
+#
+# WHAT COUNTS AS "ALREADY RECORDED", AND WHY A NON-EMPTY expect: IS NEVER TOUCHED WITHOUT --force.
+# A step's `expect: {}` is the one shape this tool ever fills in on its own; anything else -- a
+# fresh recording from a prior run, or a value a human has since edited -- is indistinguishable
+# from "reviewed" and is protected. The corpus is reviewed; silently re-recording erases the
+# review. A protected step's request is still SENT LIVE, every run (never skipped), for two
+# reasons: later steps may depend on the server-side effect it causes (a created node has to exist
+# for a later move to act on it), and its recorded expectation -- which may by now contain a
+# human-added $capture -- is replayed against the live response via Conformance::Matcher#match!,
+# which both re-verifies the step still holds AND seeds the binding table so a later, still-{}
+# step can interpolate {{name}} into its own request. That replay is also the answer to "how does
+# $capture ever get used, if this tool only ever writes $type": it doesn't, on the recording run
+# that introduces a field -- a human has to tighten $type into $capture by hand first, and only
+# the NEXT run, with that step now protected, actually binds it.
+#
+# VOLATILE VALUES -- ones that cannot be the same on the next run against the same server, let
+# alone a different one -- are recorded as {"$type": "..."} rather than as a literal, and this
+# tool decides "volatile" from the FIELD NAME, not the value's shape: a value that merely *looks*
+# like a UUID today stops being recognised the day the format changes, while "ends in _id" is
+# contract vocabulary a Rust rewrite names the same way Ruby does. See VOLATILE_KEY below for the
+# exact pattern and what it is deliberately narrow about. Every $type this run writes is reported
+# at the end -- not filed anywhere, just printed -- because $type is an admission that the
+# contract does not pin something, and a reviewer should look at each one and ask whether it
+# should have been a $capture/$ref pair instead (conformance/README.md, a later task, is where
+# that review process is written down for good; this comment is the whole of it for now).
+#
+# --force DISCARDS PROTECTION FOR EVERY STEP IN THE FILE, INCLUDING ANY HUMAN-ADDED $capture. It
+# is the blunt "re-record from scratch" escape hatch the task's own rule reserves the word
+# "unless" for -- not a per-step scalpel. A scenario whose later steps depend on an earlier step's
+# $capture will need those re-added by hand after a forced re-record, exactly as after the first
+# recording ever made; this tool does not try to be cleverer than that about it.
+#
+# DETERMINISTIC OUTPUT: this tool rewrites the WHOLE scenario file through Psych (via the YAML
+# module), not a text-level patch, so a re-record with nothing left to change produces a
+# byte-identical file (nothing new to diff) rather than incidental YAML re-formatting noise. It
+# also SORTS every key inside a value it builds itself (an `expect.body`, recursively)
+# alphabetically, because that content's original key order is just whatever the server happened
+# to serialize in, not something a human chose -- `expect`'s own two keys are the one exception,
+# kept as status-then-body (a fixed, deliberate order, not "sorted") because that is the order a
+# person actually reads an HTTP exchange in. Every VALUE a human wrote -- name, description,
+# request blocks, and each step's own name/request/expect ordering -- is left exactly as parsed;
+# this tool only ever reassigns the value already living at a step's "expect" key, never touches a
+# hash's key order. Two real costs, both observed while building 01-enrolment.yml, not merely
+# supposed: Psych does not round-trip YAML comments, so a re-record silently drops any a reviewer
+# left inside the request/expect blocks it rewrites; and Psych re-emits every scalar under its own
+# style/line-wrapping rules, so even an untouched multi-line `description:` can come back
+# re-flowed at a different line width than the human originally typed it at, even though the
+# parsed String is byte-identical. Content survives; source formatting outside `expect:` is not
+# guaranteed to. There is no comment-preserving YAML writer in this repo's dependency set (see the
+# Gemfile); noted here rather than solved here.
+#
+# NOT AUTOLOADED, same as conformance/runner.rb -- this is repo tooling, not part of the gem
+# (tinkerex-sync.gemspec's spec.files does not include conformance/ or bin/conformance-record).
+
+require "net/http"
+require "uri"
+require "json"
+require "yaml"
+require "optparse"
+
+require_relative "../conformance/runner"
+
+# Unbuffered, so an abort (stderr) never appears to "jump ahead of" the [rec]/[skip] progress
+# lines (stdout) it followed -- observed while testing the drift-detection path below: with the
+# default buffering, a real abort's message printed before the scenario's own "== ... ==" header
+# in a combined terminal view, which reads as the wrong step failing.
+$stdout.sync = true
+
+# A key counts as VOLATILE when the server could not have given the same answer on a re-run
+# against a different (or even the same, freshly-migrated) database: a database id ("id", or
+# anything ending "_id" -- user_id, device_id, node_id, ...), a wall-clock timestamp (anything
+# ending "_at" -- created_at, updated_at, expires_at, last_seen_at, ...), or a freshly-minted
+# secret (anything ending "token", bare or "_token" -- device_token chief among them, since
+# Device.register! mints it via SecureRandom on every call). Deliberately narrow and name-based,
+# not an attempt to recognise every volatile field that could ever exist -- extend it, with a real
+# recorded case as the justification (the standard CLAUDE.md §14 holds every invariant to), the
+# day a scenario needs a fourth category. A NULL value at a volatile key is recorded as a plain
+# literal `nil` rather than {"$type": "null"} -- both forms accept only JSON null, so wrapping it
+# buys nothing and a bare `null` is the more honest, more readable answer.
+VOLATILE_KEY = /(?:\A|_)(?:id|at|token)\z/
+
+# The JSON Schema-flavoured type names conformance/runner.rb's Matcher::TYPE_CHECKS recognises,
+# keyed by the Ruby class JSON.parse produces for each. Anything not listed here (Float, chiefly
+# -- none of the 25 endpoints have emitted one yet) has no honest $type spelling, and raising
+# beats guessing at one.
+JSON_TYPE_NAME = {
+  String => "string",
+  Integer => "integer",
+  TrueClass => "boolean",
+  FalseClass => "boolean",
+  Array => "array",
+  Hash => "object",
+  NilClass => "null"
+}.freeze
+
+# The default Content-Type depends on what `body` actually is: a Hash/Array body is a real JSON
+# API call (24 of this corpus's 25 endpoints); a bare String body is raw bytes bound for the one
+# endpoint that isn't (the presigned chunk-blob PUT -- see perform_http's own comment on request
+# encoding). Getting this wrong is not cosmetic: Rails parses any request body whose Content-Type
+# claims application/json BEFORE the controller runs, regardless of which controller it is, and a
+# raw byte body that happens not to parse as JSON (which is the ordinary case for real file bytes)
+# is rejected with a bare 400 -- BlobController#upload never gets a chance to run. A step's own
+# `headers:` is merged in AFTER this at every call site, so it always overrides this default.
+def default_headers_for(body)
+  {
+    "Content-Type" => (body.is_a?(String) ? "application/octet-stream" : "application/json"),
+    "Accept" => "application/json"
+  }
+end
+
+REQUEST_CLASS = {
+  "GET" => Net::HTTP::Get,
+  "POST" => Net::HTTP::Post,
+  "PUT" => Net::HTTP::Put,
+  "DELETE" => Net::HTTP::Delete
+}.freeze
+
+def json_type_name(value)
+  JSON_TYPE_NAME.fetch(value.class) do
+    raise "don't know how to record a #{value.class} as a $type (value: #{value.inspect}) -- " \
+          "add it to JSON_TYPE_NAME once conformance/runner.rb's Matcher::TYPE_CHECKS also knows it"
+  end
+end
+
+def volatile_key?(key)
+  key.is_a?(String) && VOLATILE_KEY.match?(key)
+end
+
+# Interpolates {{name}} in every String reachable inside `value`, recursively through Hash/Array,
+# leaving every other scalar (Integer/Float/true/false/nil) untouched -- a query or body value can
+# be genuinely numeric/boolean (schema.json's `query` property allows it), and only a String can
+# contain a template in the first place. Used for both request.query and request.body: the same
+# shape, so one function, not two. Never applied to headers -- the matcher vocabulary's own
+# summary is explicit that interpolation reaches "paths, query values and body values," and every
+# request in this corpus authenticates with the one token this run was given.
+def deep_interpolate(value, matcher)
+  case value
+  when String then matcher.interpolate(value)
+  when Hash then value.transform_values { |v| deep_interpolate(v, matcher) }
+  when Array then value.map { |v| deep_interpolate(v, matcher) }
+  else value
+  end
+end
+
+# Turns one ACTUAL value from a live response into a recorded EXPECTATION: a volatile leaf becomes
+# {"$type": ...} (and is appended to `notes` for the end-of-run summary); everything else is
+# recorded structurally -- a Hash recurses key by key with its keys SORTED (see the file header
+# for why only recorder-built content is sorted), an Array recurses element by element IN PLACE
+# (order is significant to Conformance::Matcher#match_array!, so it is never reordered), and a
+# plain scalar is recorded as the literal it is. `path` is the dotted/bracketed JSON path this
+# value lives at; `step_name` travels along purely so the end-of-run summary can tell two steps'
+# "body.device_id" apart -- neither plays any role in matching.
+def record_value(value, path:, step_name:, key: nil, notes:)
+  if volatile_key?(key) && !value.nil?
+    type = json_type_name(value)
+    notes << { step_name:, path:, type: }
+    return { "$type" => type }
+  end
+
+  case value
+  when Hash
+    value.keys.sort.each_with_object({}) do |k, out|
+      out[k] = record_value(value[k], path: "#{path}.#{k}", step_name:, key: k, notes:)
+    end
+  when Array
+    value.each_with_index.map { |v, i| record_value(v, path: "#{path}[#{i}]", step_name:, notes:) }
+  else
+    value
+  end
+end
+
+# Sends one interpolated request and returns [status_int, parsed_body_or_nil]. Connection failures
+# are left to raise -- the main loop's own rescue turns an unexpected one into a clean abort
+# rather than a Ruby backtrace, so this function stays a plain, undecorated HTTP call.
+#
+# REQUEST ENCODING: a bare String `body` is sent VERBATIM -- never JSON.generate'd -- and a
+# Hash/Array `body` is JSON-encoded, same as always. This is the one shape a String body has ever
+# had in this corpus (every scenario since 02-commit.yml: the presigned chunk-blob PUT, whose
+# `body:` is the chunk's raw content, e.g. "drawing bytes"); every one of the other 24 endpoints
+# takes a JSON object. Unconditionally JSON-encoding a String -- the behaviour this replaces --
+# wrapped it in quotes on the wire (`"drawing bytes"`, 15 bytes, not 13), which was invisible for
+# five files because none of them ever assert a byte on the far side of a chunk-blob round trip
+# (their PUT steps check only `status: 200`). 09-chunks.yml is the first scenario that DOES read a
+# chunk back through a real hydration GET, and a non-Ruby verifier that (correctly) does not
+# JSON-parse an application/octet-stream response would see this tool's own added quotes and call
+# it a mismatch that has nothing to do with the server -- see that file's own description.
+#
+# RESPONSE DECODING, the matching half: JSON.parse only when the response actually claims to be
+# JSON (Content-Type: application/json, what every endpoint except the two chunk-blob endpoints
+# sends). Anything else -- today, only BlobController#download's `application/octet-stream` -- is
+# recorded as the literal raw String, UTF-8, so a scenario can assert it with a plain string
+# equality the same way every other field is asserted. Blindly JSON-parsing a non-JSON body used
+# to half-work by coincidence: a quoted request body round-tripped back through JSON.parse strips
+# its own quotes, which reads as correct only because the same tool wrote both sides. Fixing the
+# request side alone, without this, would have made hydration reads raise "not valid JSON" instead.
+def perform_http(base_uri:, method:, path:, query:, body:, headers:)
+  uri = URI.join(base_uri, path)
+  uri.query = URI.encode_www_form(query) if query && !query.empty?
+
+  request_class = REQUEST_CLASS.fetch(method) do
+    raise "unsupported HTTP method #{method.inspect} -- schema.json's request.method enum only " \
+          "allows GET/POST/PUT/DELETE, so this scenario file is not schema-valid"
+  end
+  request = request_class.new(uri)
+  headers.each { |name, value| request[name] = value }
+  if body
+    request.body = body.is_a?(String) ? body : JSON.generate(body)
+  end
+
+  response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(request) }
+
+  raw = response.body.to_s
+  actual_body =
+    if raw.strip.empty?
+      nil
+    elsif response.content_type == "application/json"
+      JSON.parse(raw)
+    else
+      raw.dup.force_encoding(Encoding::UTF_8)
+    end
+  [response.code.to_i, actual_body]
+rescue JSON::ParserError
+  raise "#{method} #{uri}: response was not valid JSON (status #{response&.code}): #{raw.inspect}"
+end
+
+def load_scenario(scenario_path)
+  scenario = YAML.load_file(scenario_path)
+  unless scenario.is_a?(Hash) && scenario["steps"].is_a?(Array) && !scenario["steps"].empty?
+    raise "#{scenario_path}: not a scenario file -- expected a top-level `steps:` array with at " \
+          "least one step (see conformance/schema.json)"
+  end
+  scenario
+end
+
+# Deterministic YAML: re-dumping the exact same Ruby structure always produces the exact same
+# bytes (YAML.dump is already a pure function of its input; this tool's own contribution is only
+# the alphabetical key sort inside record_value above), so a re-record with nothing new to say
+# makes no diff at all.
+def dump_scenario(scenario)
+  YAML.dump(scenario)
+end
+
+def record_scenario(scenario_path, base_uri:, device_token:, force:)
+  scenario = load_scenario(scenario_path)
+  matcher = Conformance::Matcher.new # fresh bindings per scenario file -- see runner.rb's own comment
+  notes = []
+  dirty = false
+
+  puts "== #{scenario_path} =="
+
+  scenario.fetch("steps").each do |step|
+    request = step.fetch("request")
+    expect = step.fetch("expect")
+    already_recorded = !(expect.nil? || expect.empty?)
+
+    method = request.fetch("method")
+    path = matcher.interpolate(request.fetch("path"))
+    query = request["query"] && deep_interpolate(request["query"], matcher)
+    body = request["body"] && deep_interpolate(request["body"], matcher)
+    # {{name}} resolves here too, same as path/query/body -- a scenario that must authenticate as
+    # a SECOND, dynamically-enrolled device (POST /v1/devices's own device_token, captured) has no
+    # other way to name it: that token cannot be known ahead of time, so a header carrying it is
+    # exactly the "must exercise a header directly" case schema.json's own comment already
+    # anticipates, just with a captured rather than a literal value. Found by a real 401: an
+    # unresolved header was sent as the literal eight characters "{{name}}", which is not a valid
+    # bearer token and fails auth with no hint that interpolation was the thing that never ran.
+    headers = default_headers_for(body).merge("Authorization" => "Bearer #{device_token}")
+                                        .merge(request["headers"] ? deep_interpolate(request["headers"], matcher) : {})
+
+    status, actual_body = perform_http(base_uri:, method:, path:, query:, body:, headers:)
+
+    if already_recorded && !force
+      begin
+        matcher.match!(expect.fetch("status"), status, "status")
+        matcher.match!(expect["body"], actual_body, "body") if expect.key?("body")
+      rescue Conformance::Mismatch => e
+        raise "#{scenario_path} / #{step['name']}: already recorded, but the live server no " \
+              "longer matches it (#{e.message}). Investigate the drift, or re-record on purpose " \
+              "with --force."
+      end
+      puts "  [skip] #{step['name']} -- #{method} #{path} -> #{status} (already recorded; pass --force to overwrite)"
+      next
+    end
+
+    new_expect = { "status" => status }
+    unless actual_body.nil?
+      new_expect["body"] = record_value(actual_body, path: "body", step_name: step["name"], notes:)
+    end
+    step["expect"] = new_expect
+    dirty = true
+    puts "  [rec]  #{step['name']} -- #{method} #{path} -> #{status}"
+  end
+
+  if dirty
+    File.write(scenario_path, dump_scenario(scenario))
+    puts "wrote #{scenario_path}"
+  else
+    puts "nothing to record (every step already recorded; pass --force to overwrite)"
+  end
+
+  unless notes.empty?
+    puts
+    puts "$type written (#{notes.size}):"
+    notes.each { |n| puts "  #{n[:step_name]} > #{n[:path]} -> $type: #{n[:type]}" }
+  end
+  puts
+end
+
+options = { force: false }
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: bin/conformance-record [--force] SCENARIO.yml [SCENARIO.yml ...]"
+  opts.on("--force", "Re-record every step, discarding any prior recording or human edit.") { options[:force] = true }
+  opts.on("-h", "--help", "Print this help.") do
+    puts opts
+    exit
+  end
+end
+parser.parse!(ARGV)
+
+if ARGV.empty?
+  warn parser.help
+  exit 1
+end
+
+base_uri = ENV["SYNC_SERVER_URL"]
+device_token = ENV["SYNC_DEVICE_TOKEN"]
+if base_uri.to_s.empty? || device_token.to_s.empty?
+  abort <<~MSG
+    bin/conformance-record needs both SYNC_SERVER_URL and SYNC_DEVICE_TOKEN.
+
+      cd host && bin/rails db:prepare && EMAIL=you@example.com bin/rails sync:device:issue
+      STORAGE_BACKEND=local bin/rails server -p 3003 &
+      SYNC_SERVER_URL=http://127.0.0.1:3003 SYNC_DEVICE_TOKEN=<token printed above> \\
+        bin/conformance-record conformance/scenarios/01-enrolment.yml
+  MSG
+end
+
+# /up TOUCHES THE DATABASE (host/config/routes.rb's own comment: "a static 200 is worse than no
+# healthcheck at all"), so this is a genuine readiness check, not a bare port-open probe -- it
+# fails clearly on an unmigrated schema instead of every step failing with a confusing 500.
+begin
+  up = URI.join(base_uri, "/up")
+  response = Net::HTTP.get_response(up)
+  unless response.code == "200"
+    abort "#{up} answered #{response.code} #{response.body} -- the server is up but not ready " \
+          "(an empty schema answers 503 here; run `bin/rails db:prepare` in host/ first)"
+  end
+rescue StandardError => e
+  abort "could not reach #{base_uri} (#{e.class}: #{e.message}) -- is the server running? " \
+        "STORAGE_BACKEND=local bin/rails server -p 3003, from host/"
+end
+
+begin
+  ARGV.each do |scenario_path|
+    record_scenario(scenario_path, base_uri:, device_token:, force: options[:force])
+  end
+rescue RuntimeError => e
+  abort e.message
+end

@@ -113,10 +113,20 @@ JSON_TYPE_NAME = {
   NilClass => "null"
 }.freeze
 
-DEFAULT_HEADERS = {
-  "Content-Type" => "application/json",
-  "Accept" => "application/json"
-}.freeze
+# The default Content-Type depends on what `body` actually is: a Hash/Array body is a real JSON
+# API call (24 of this corpus's 25 endpoints); a bare String body is raw bytes bound for the one
+# endpoint that isn't (the presigned chunk-blob PUT -- see perform_http's own comment on request
+# encoding). Getting this wrong is not cosmetic: Rails parses any request body whose Content-Type
+# claims application/json BEFORE the controller runs, regardless of which controller it is, and a
+# raw byte body that happens not to parse as JSON (which is the ordinary case for real file bytes)
+# is rejected with a bare 400 -- BlobController#upload never gets a chance to run. A step's own
+# `headers:` is merged in AFTER this at every call site, so it always overrides this default.
+def default_headers_for(body)
+  {
+    "Content-Type" => (body.is_a?(String) ? "application/octet-stream" : "application/json"),
+    "Accept" => "application/json"
+  }
+end
 
 REQUEST_CLASS = {
   "GET" => Net::HTTP::Get,
@@ -182,6 +192,27 @@ end
 # Sends one interpolated request and returns [status_int, parsed_body_or_nil]. Connection failures
 # are left to raise -- the main loop's own rescue turns an unexpected one into a clean abort
 # rather than a Ruby backtrace, so this function stays a plain, undecorated HTTP call.
+#
+# REQUEST ENCODING: a bare String `body` is sent VERBATIM -- never JSON.generate'd -- and a
+# Hash/Array `body` is JSON-encoded, same as always. This is the one shape a String body has ever
+# had in this corpus (every scenario since 02-commit.yml: the presigned chunk-blob PUT, whose
+# `body:` is the chunk's raw content, e.g. "drawing bytes"); every one of the other 24 endpoints
+# takes a JSON object. Unconditionally JSON-encoding a String -- the behaviour this replaces --
+# wrapped it in quotes on the wire (`"drawing bytes"`, 15 bytes, not 13), which was invisible for
+# five files because none of them ever assert a byte on the far side of a chunk-blob round trip
+# (their PUT steps check only `status: 200`). 09-chunks.yml is the first scenario that DOES read a
+# chunk back through a real hydration GET, and a non-Ruby verifier that (correctly) does not
+# JSON-parse an application/octet-stream response would see this tool's own added quotes and call
+# it a mismatch that has nothing to do with the server -- see that file's own description.
+#
+# RESPONSE DECODING, the matching half: JSON.parse only when the response actually claims to be
+# JSON (Content-Type: application/json, what every endpoint except the two chunk-blob endpoints
+# sends). Anything else -- today, only BlobController#download's `application/octet-stream` -- is
+# recorded as the literal raw String, UTF-8, so a scenario can assert it with a plain string
+# equality the same way every other field is asserted. Blindly JSON-parsing a non-JSON body used
+# to half-work by coincidence: a quoted request body round-tripped back through JSON.parse strips
+# its own quotes, which reads as correct only because the same tool wrote both sides. Fixing the
+# request side alone, without this, would have made hydration reads raise "not valid JSON" instead.
 def perform_http(base_uri:, method:, path:, query:, body:, headers:)
   uri = URI.join(base_uri, path)
   uri.query = URI.encode_www_form(query) if query && !query.empty?
@@ -192,12 +223,21 @@ def perform_http(base_uri:, method:, path:, query:, body:, headers:)
   end
   request = request_class.new(uri)
   headers.each { |name, value| request[name] = value }
-  request.body = JSON.generate(body) if body
+  if body
+    request.body = body.is_a?(String) ? body : JSON.generate(body)
+  end
 
   response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(request) }
 
   raw = response.body.to_s
-  actual_body = raw.strip.empty? ? nil : JSON.parse(raw)
+  actual_body =
+    if raw.strip.empty?
+      nil
+    elsif response.content_type == "application/json"
+      JSON.parse(raw)
+    else
+      raw.dup.force_encoding(Encoding::UTF_8)
+    end
   [response.code.to_i, actual_body]
 rescue JSON::ParserError
   raise "#{method} #{uri}: response was not valid JSON (status #{response&.code}): #{raw.inspect}"
@@ -244,8 +284,8 @@ def record_scenario(scenario_path, base_uri:, device_token:, force:)
     # anticipates, just with a captured rather than a literal value. Found by a real 401: an
     # unresolved header was sent as the literal eight characters "{{name}}", which is not a valid
     # bearer token and fails auth with no hint that interpolation was the thing that never ran.
-    headers = DEFAULT_HEADERS.merge("Authorization" => "Bearer #{device_token}")
-                              .merge(request["headers"] ? deep_interpolate(request["headers"], matcher) : {})
+    headers = default_headers_for(body).merge("Authorization" => "Bearer #{device_token}")
+                                        .merge(request["headers"] ? deep_interpolate(request["headers"], matcher) : {})
 
     status, actual_body = perform_http(base_uri:, method:, path:, query:, body:, headers:)
 

@@ -1,0 +1,132 @@
+---
+name: '09-chunks'
+description: 'POST /v1/chunks/download -- the hydration door, distinct from the two-phase
+  upload 02-commit.yml already covers. A device that already has a node''s manifest
+  (from /v1/tree or /v1/changes) but is missing the chunk bytes themselves asks this
+  endpoint for presigned GET URLs, then fetches them directly from storage -- bytes
+  never flow through Rails either direction. The centrepiece is an EXACT byte round
+  trip: the same literal content is both the request body of the upload PUT and the
+  literal expected body of the hydration GET a few steps later, so a human reading
+  this file can see the two literals sit near each other and match exactly, rather
+  than trusting a round trip through some encoding neither side examines. That precision
+  only exists because of a fix made alongside this file: the conformance runner used
+  to unconditionally JSON.generate every request body, which silently wrapped a raw
+  chunk upload in quotes (`"drawing bytes"`, 15 bytes on the wire, not 13) -- invisible
+  in every earlier scenario file, none of which ever asserts a byte on the far side
+  of a hydration read, but exactly the bug this file''s own reason for existing would
+  have been recording. See bin/conformance-record''s perform_http (and test/conformance_test.rb''s
+  identical perform_request) for the fix: a bare String body now goes out verbatim
+  with an application/octet-stream Content-Type, and a non-JSON response is kept as
+  the literal raw string rather than blindly JSON.parse''d. This file also pins three
+  refusal/omission shapes: a hash this user does not own is silently DROPPED from
+  the response (the key is simply absent, not present with a null value -- `.compact`
+  in V1::ChunksController#download), a syntactically malformed hash is dropped the
+  same way rather than raising (HASH_RE is applied before the ownership lookup, so
+  it never reaches the database), and an empty request list answers an empty map,
+  not an error. Node ids continue the corpus''s structured-id convention with ''9''
+  as this file''s leading digit.'
+steps:
+- name: begin a commit for hydrate-me.bin, as device A (the bootstrap credential)
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000009002
+      node_id: 00000000-0000-4000-8000-000000009001
+      parent_node_id:
+      name: hydrate-me.bin
+      base_version_id:
+      size: 32
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000009003'
+        offset: 0
+        length: 32
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000009002
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000009003'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000009003':
+          "$capture": hydrate_put_url
+- name: upload hydrate-me.bin's chunk bytes -- this exact literal is what the hydration
+    GET must return byte-for-byte later in this file
+  request:
+    method: PUT
+    path: "{{hydrate_put_url}}"
+    body: hydration round trip bytes exact
+  expect:
+    status: 200
+- name: finalize hydrate-me.bin
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000009002/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: ask for a presigned hydration GET for the one chunk this user owns
+  request:
+    method: POST
+    path: "/v1/chunks/download"
+    body:
+      hashes:
+      - '0000000000000000000000000000000000000000000000000000000000009003'
+  expect:
+    status: 200
+    body:
+      urls:
+        '0000000000000000000000000000000000000000000000000000000000009003':
+          "$capture": hydrate_get_url
+- name: fetch the presigned URL directly -- the exact same literal bytes that were
+    uploaded above, not a JSON-quoted echo of them
+  request:
+    method: GET
+    path: "{{hydrate_get_url}}"
+  expect:
+    status: 200
+    body: hydration round trip bytes exact
+- name: a hash this user does not own is silently OMITTED from the response, not present
+    with a null value -- mixed in beside a hash that IS owned
+  request:
+    method: POST
+    path: "/v1/chunks/download"
+    body:
+      hashes:
+      - '0000000000000000000000000000000000000000000000000000000000009003'
+      - ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  expect:
+    status: 200
+    body:
+      urls:
+        '0000000000000000000000000000000000000000000000000000000000009003':
+          "$type": string
+- name: a syntactically malformed hash (not 64 lowercase hex) is dropped the same
+    way, before it ever reaches the database
+  request:
+    method: POST
+    path: "/v1/chunks/download"
+    body:
+      hashes:
+      - '0000000000000000000000000000000000000000000000000000000000009003'
+      - not-a-real-hash
+  expect:
+    status: 200
+    body:
+      urls:
+        '0000000000000000000000000000000000000000000000000000000000009003':
+          "$type": string
+- name: an empty hash list answers an empty map, not an error
+  request:
+    method: POST
+    path: "/v1/chunks/download"
+    body:
+      hashes: []
+  expect:
+    status: 200
+    body:
+      urls: {}

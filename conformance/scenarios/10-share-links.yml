@@ -1,0 +1,179 @@
+---
+name: 10-share-links
+description: 'POST/DELETE /v1/share_links (the owner side, authenticated) and GET
+  /v1/share/:token plus POST /v1/share/:token/download (the anonymous redeem side)
+  -- a read-only capability token over one immutable version of one file. The redeem
+  side is deliberately NOT device-token authenticated at all (Sync::V1::ShareController
+  does not inherit BaseController), which this file proves the strong way: every redeem
+  request below sends a deliberately GARBAGE Authorization header ("Bearer this-is-not-a-real-device-token")
+  and still succeeds -- if the redeem endpoints checked the bearer token the way every
+  other endpoint in this corpus does, this would 401, not answer normally. The hydration
+  step chains straight into 09-chunks.yml''s own fix: fetching the presigned URL a
+  share download mints returns the exact literal bytes that were uploaded, proving
+  the byte-exact round trip holds through the SHARING path too, not only the owning
+  device''s own. Also pinned: creating a link with expires_at already in the past
+  mints a link that is immediately dead (redeeming it 404s, indistinguishable from
+  an unknown token -- the anonymous side never discloses WHY a token doesn''t work);
+  revoking a link (DELETE) makes a previously-good token 404 on its very next redeem;
+  and POST /v1/share_links for a version_id that does not exist answers plain 404,
+  the same not_found shape as everything else here, not a 422 or a validation error
+  body. The expiry timestamp uses a fixed date in the past (2020-01-01) rather than
+  one computed relative to "now", specifically so this recording stays valid no matter
+  how much later it is replayed. Node ids continue the corpus''s structured-id convention
+  with ''a'' (hex for this being the corpus''s 10th file) as this file''s leading
+  digit.'
+steps:
+- name: begin a commit for shareable-report.txt, as device A (the bootstrap credential)
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000a002
+      node_id: 00000000-0000-4000-8000-00000000a001
+      parent_node_id:
+      name: shareable-report.txt
+      base_version_id:
+      size: 26
+      manifest:
+      - hash: 000000000000000000000000000000000000000000000000000000000000a003
+        offset: 0
+        length: 26
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000a002
+      missing:
+      - 000000000000000000000000000000000000000000000000000000000000a003
+      put_urls:
+        000000000000000000000000000000000000000000000000000000000000a003:
+          "$capture": report_put_url
+- name: upload shareable-report.txt's chunk bytes -- this exact literal is what a
+    share download must return byte-for-byte later in this file
+  request:
+    method: PUT
+    path: "{{report_put_url}}"
+    body: share this content exactly
+  expect:
+    status: 200
+- name: finalize shareable-report.txt
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-00000000a002/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": report_version_id
+- name: create a share link for that version -- no expires_at, so it comes back null
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000a001
+      version_id: "{{report_version_id}}"
+  expect:
+    status: 201
+    body:
+      expires_at:
+      id:
+        "$capture": share_link_id
+      token:
+        "$capture": share_token
+      version_id:
+        "$ref": report_version_id
+- name: redeem the link's token with a DELIBERATELY GARBAGE Authorization header --
+    the anonymous redeem side does not check it at all, only the token in the URL
+  request:
+    method: GET
+    path: "/v1/share/{{share_token}}"
+    headers:
+      Authorization: Bearer this-is-not-a-real-device-token
+  expect:
+    status: 200
+    body:
+      manifest:
+      - hash: 000000000000000000000000000000000000000000000000000000000000a003
+        length: 26
+        offset: 0
+      name: shareable-report.txt
+      node_id: 00000000-0000-4000-8000-00000000a001
+      version_id:
+        "$ref": report_version_id
+- name: ask the same (still garbage-authenticated) redeem for a presigned download
+    URL
+  request:
+    method: POST
+    path: "/v1/share/{{share_token}}/download"
+    headers:
+      Authorization: Bearer this-is-not-a-real-device-token
+  expect:
+    status: 200
+    body:
+      urls:
+        000000000000000000000000000000000000000000000000000000000000a003:
+          "$capture": share_get_url
+- name: fetch the presigned URL directly -- the exact same literal bytes that were
+    uploaded above, proving the byte-exact round trip through the SHARING path too
+  request:
+    method: GET
+    path: "{{share_get_url}}"
+  expect:
+    status: 200
+    body: share this content exactly
+- name: create a SECOND link for the same version, already expired (a fixed past date,
+    so this recording never goes stale)
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000a001
+      version_id: "{{report_version_id}}"
+      expires_at: '2020-01-01T00:00:00Z'
+  expect:
+    status: 201
+    body:
+      expires_at: '2020-01-01T00:00:00.000Z'
+      id:
+        "$type": integer
+      token:
+        "$capture": expired_token
+      version_id:
+        "$ref": report_version_id
+- name: redeeming the already-expired link 404s -- indistinguishable from an unknown
+    token, the anonymous side never discloses why
+  request:
+    method: GET
+    path: "/v1/share/{{expired_token}}"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: revoke the FIRST link
+  request:
+    method: DELETE
+    path: "/v1/share_links/{{share_link_id}}"
+  expect:
+    status: 204
+- name: redeeming the just-revoked token now 404s too -- the same shape as the expired
+    one, and as an unknown token would
+  request:
+    method: GET
+    path: "/v1/share/{{share_token}}"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: creating a share link for a version_id that does not exist answers a plain
+    404, not a validation error
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000a001
+      version_id: 00000000-0000-4000-8000-0000000000ff
+  expect:
+    status: 404
+    body:
+      error: not_found

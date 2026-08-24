@@ -1,0 +1,178 @@
+---
+name: '08-locks'
+description: 'POST /v1/nodes/:id/lock, POST /v1/nodes/:id/unlock, and GET /v1/locks
+  -- the best-effort, advisory cross-device edit lock (Sync::Locks, TTL 5 minutes).
+  Device A locks a real file; device B''s own attempt to lock the SAME node while
+  A''s lock is still live does NOT steal or refresh it -- the response comes back
+  held: true, by_me: false, and (the precise proof it wasn''t touched) the exact SAME
+  expires_at device A''s own lock call received, captured and $ref''d rather than
+  merely type-checked. Three behaviours here are easy to assume are safer than they
+  are, and this file pins the server''s REAL answer to each rather than the intuitive
+  one: (1) GET /v1/locks reports by_me: false for EVERY caller, always, regardless
+  of which device asks -- Sync::Locks.active passes no device to #status at all, so
+  the list endpoint cannot answer "mine" for anyone (only a device''s OWN lock/unlock
+  call, which is handed its own identity, can); (2) an unlock call from a device that
+  does NOT hold the lock still answers {released: true} -- Sync::Locks.release returns
+  that literal unconditionally, whether or not its own `if` actually destroyed a row
+  -- proven here by device B "releasing" device A''s lock and then reading it right
+  back, unchanged, from GET /v1/locks; and (3) lock/unlock/GET-locks perform NO existence
+  check on node_id at all -- the final step locks a node_id that was never created
+  by any request in this corpus and still gets back a normal 200 held:true. Node ids
+  continue the corpus''s structured-id convention with ''8'' as this file''s leading
+  digit; the never-created id in the last step uses 099 specifically to read as "not
+  a real sequence position" at a glance.'
+steps:
+- name: begin a commit for locked-drawing.svg, as device A (the bootstrap credential)
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000008002
+      node_id: 00000000-0000-4000-8000-000000008001
+      parent_node_id:
+      name: locked-drawing.svg
+      base_version_id:
+      size: 21
+      manifest:
+      - hash: '0000000000000000000000000000000000000000000000000000000000008003'
+        offset: 0
+        length: 21
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000008002
+      missing:
+      - '0000000000000000000000000000000000000000000000000000000000008003'
+      put_urls:
+        '0000000000000000000000000000000000000000000000000000000000008003':
+          "$capture": drawing_put_url
+- name: upload locked-drawing.svg's chunk bytes
+  request:
+    method: PUT
+    path: "{{drawing_put_url}}"
+    body: svg lock demo content
+  expect:
+    status: 200
+- name: finalize locked-drawing.svg
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000008002/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: enrol a second device, to prove the lock is a per-device thing
+  request:
+    method: POST
+    path: "/v1/devices"
+    body:
+      name: conformance-08-device-b
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$type": integer
+      device_token:
+        "$capture": device_b_token
+- name: device A locks locked-drawing.svg
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008001/lock"
+  expect:
+    status: 200
+    body:
+      by_me: true
+      device_name: device
+      expires_at:
+        "$capture": lock_a_expires_at
+      held: true
+      node_id: 00000000-0000-4000-8000-000000008001
+- name: device B's own lock attempt on the SAME node does not steal or refresh it
+    -- held true, by_me false, and the exact same expires_at device A's own call received
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008001/lock"
+    headers:
+      Authorization: Bearer {{device_b_token}}
+  expect:
+    status: 200
+    body:
+      by_me: false
+      device_name: device
+      expires_at:
+        "$ref": lock_a_expires_at
+      held: true
+      node_id: 00000000-0000-4000-8000-000000008001
+- name: GET /v1/locks reports by_me false here TOO, even though this request authenticates
+    as device A, the actual holder -- the list endpoint never learns who is asking
+  request:
+    method: GET
+    path: "/v1/locks"
+  expect:
+    status: 200
+    body:
+      locks:
+      - by_me: false
+        device_name: device
+        expires_at:
+          "$ref": lock_a_expires_at
+        held: true
+        node_id: 00000000-0000-4000-8000-000000008001
+- name: device B "releases" a lock it never held -- answers released true regardless,
+    but nothing actually changes (proven by the very next read)
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008001/unlock"
+    headers:
+      Authorization: Bearer {{device_b_token}}
+  expect:
+    status: 200
+    body:
+      released: true
+- name: GET /v1/locks again -- unchanged; device B's unlock was a no-op
+  request:
+    method: GET
+    path: "/v1/locks"
+  expect:
+    status: 200
+    body:
+      locks:
+      - by_me: false
+        device_name: device
+        expires_at:
+          "$ref": lock_a_expires_at
+        held: true
+        node_id: 00000000-0000-4000-8000-000000008001
+- name: device A, the actual holder, releases it for real
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008001/unlock"
+  expect:
+    status: 200
+    body:
+      released: true
+- name: GET /v1/locks is empty now
+  request:
+    method: GET
+    path: "/v1/locks"
+  expect:
+    status: 200
+    body:
+      locks: []
+- name: locking a node_id NEVER CREATED by any request in this corpus still answers
+    a normal 200 -- lock/unlock perform no existence check on node_id at all
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008099/lock"
+  expect:
+    status: 200
+    body:
+      by_me: true
+      device_name: device
+      expires_at:
+        "$type": string
+      held: true
+      node_id: 00000000-0000-4000-8000-000000008099

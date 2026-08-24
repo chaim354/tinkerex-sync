@@ -469,10 +469,26 @@ module FileLayer
     # directly for the chunk leg; it no longer can, same reason mkdir/move/delete's own comments
     # give -- in remote mode there is no Sync::Trash in this process to branch into.
     #
-    # `to_root: true`, MATCHING WHAT TrashController#restore HAS ALWAYS PASSED ON THE CHUNK
-    # BRANCH. An ORPHAN -- a node whose parent is itself tombstoned -- has no path to restore
-    # under, so Sync::Trash puts it at the root instead of raising ParentDeleted at a user who
-    # only clicked Restore.
+    # AN ORPHANED RESTORE IS REFUSED, AND THAT REVERSES WHAT THIS COMMENT USED TO ARGUE.
+    #
+    # It said `to_root: true`, matching what TrashController#restore had always passed on the chunk
+    # branch, because an orphan "has no path to restore under, so Sync::Trash puts it at the root
+    # instead of raising ParentDeleted at a user who only clicked Restore." The paragraph below
+    # then conceded that this scatters a folder's contents to the root IRREVERSIBLY, that one
+    # cascading folder delete is now enough to reach it, and declined to fix it -- "ordering the
+    # restores is a caller's job, not this adapter's."
+    #
+    # The dichotomy it argued from was false. "Succeed at the root" and "raise at a user who only
+    # clicked Restore" are not the only options; the third is a refusal naming what to do instead,
+    # which is RECOVERABLE where the scatter is not. The maker app's TrashController already
+    # rescues UnsupportedOperation and renders a flash, so the UI this comment said did not exist
+    # has existed for some time.
+    #
+    # What settled it was measurement, not argument. FileLayer::ChunkRemote posts an empty body to
+    # /v1/trash/:id/restore, so it takes the server's strict default and REFUSES -- while this
+    # adapter succeeded. A journey suite run against a real standalone server caught the
+    # divergence, and a conformance corpus now pins both arms of the server's own behaviour. Given
+    # the two adapters had to converge, the recoverable answer wins.
     #
     # V1::TrashController KEEPS ITS OWN DIRECT Sync::Trash.restore CALL, WITH A CALLER-SUPPLIED
     # to_root: -- do not collapse that one too. It is sync-engine code moving to the sync repo in
@@ -529,9 +545,19 @@ module FileLayer
       # answer NotFound for exactly the rows this verb exists to act on.
       user.nodes.exists?(node_id:) ||
         raise(NotFound, "node #{node_id.inspect} does not exist")
-      node, seq = Sync::Trash.restore(user:, node_id:, to_root: true)
+      node, seq = Sync::Trash.restore(user:, node_id:)
       Sync::LibraryChannel.broadcast_change(user, seq) if seq
       file_info(node, current_version_for(user, node)&.size)
+    rescue Sync::Trash::ParentDeleted
+      # THE SAME ANSWER FileLayer::ChunkRemote ALREADY GIVES, which is why it is mapped here rather
+      # than left to escape. Remote mode gets a 409 from the server and its Transport turns that
+      # into UnsupportedOperation; a bare ParentDeleted from this adapter would be one condition
+      # with two answers across two backends in the same family -- the shape CLAUDE.md 14a exists
+      # to forbid. The message names the ACTION, because a user who clicked Restore needs to know
+      # to restore the folder first, not that a constant was raised.
+      raise UnsupportedOperation,
+            "That file's folder was deleted too. Restore the folder first and its contents " \
+            "come back with it."
     end
 
     # Normalize over the chunk-store backends.

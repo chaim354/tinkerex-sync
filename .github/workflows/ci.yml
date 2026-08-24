@@ -45,3 +45,133 @@ jobs:
         run: |
           (cd host && bin/rails db:prepare)
           bundle exec rake test:host
+
+  # THE CONFORMANCE CORPUS, against a REAL host process -- not test/dummy, and not host/'s own
+  # `test` environment (the step above's own database). This job boots host/ the same way
+  # bin/conformance-record's own usage comment does: no RAILS_ENV (so it defaults to
+  # development, same as that comment's example), STORAGE_BACKEND=local, port 3003.
+  #
+  # A SKIP INSIDE test/conformance_test.rb IS INVISIBLE TO EVERYTHING INSIDE THAT SUITE (that
+  # file's own header comment says so) -- Minitest reports a skipped test and a passing test both
+  # as "not red," and nothing in Minitest lets one test assert about another test's own skip. So
+  # THIS JOB is where that guarantee has to live: it parses the verifier's own summary line and
+  # fails the step outright if it finds a nonzero skip count, or zero runs at all (the emptier,
+  # easier-to-miss failure mode: a wrong test path or a renamed scenarios/ directory reporting a
+  # clean "0 runs, 0 skips" that looks exactly like success).
+  conformance:
+    runs-on: [ self-hosted, macos ]
+    steps:
+      - uses: actions/checkout@v7
+
+      # No ruby/setup-ruby here either -- same reason as the job above.
+      - name: Install gems
+        run: bundle install --quiet
+
+      # A UNIQUE EMAIL PER RUN (run id + attempt), not a fixed one. The self-hosted runner is
+      # PERSISTENT -- host/storage/development.sqlite3 is not recreated between jobs -- and
+      # 01-enrolment.yml's first step asserts whoami's head_seq is the LITERAL 0. That happens to
+      # hold even for a reused user today (nothing in this corpus yet advances head_seq), but
+      # tying correctness to "no scenario has done that yet" is exactly the kind of assumption
+      # this repo's own history says to not lean on (CLAUDE.md-shaped lesson, one repo over: a
+      # green suite is not evidence a guard works if its precondition was never really exercised).
+      # A fresh user every run sidesteps the question entirely, at no cost -- Device.register!
+      # does not touch head_seq either way, so this changes nothing about what gets verified.
+      - name: Boot the standalone host on port 3003
+        run: |
+          # SELF-HOSTED RUNNERS ARE PERSISTENT: a previous run's server can still be listening if
+          # that job was cancelled, or crashed, before its own "Stop the standalone host" step
+          # ran. Kill it rather than silently choosing a different port -- picking another port
+          # would mean this job's own SYNC_SERVER_URL points at a process nobody just prepared a
+          # database or issued a token for.
+          if [ -n "$(lsof -ti tcp:3003 || true)" ]; then
+            echo "port 3003 already in use -- killing stale listener(s)"
+            lsof -ti tcp:3003 | xargs -r kill -9 || true
+            sleep 1
+          fi
+
+          cd host
+          bin/rails db:prepare
+
+          EMAIL="conformance-ci-${{ github.run_id }}-${{ github.run_attempt }}@tinkerex-sync.test"
+          ISSUE_OUTPUT="$(EMAIL="$EMAIL" bin/rails sync:device:issue)"
+          echo "$ISSUE_OUTPUT" | sed -E 's/(device_token: ).+/\1[redacted]/'
+          DEVICE_TOKEN="$(echo "$ISSUE_OUTPUT" | awk -F': *' '/^device_token:/ {print $2}')"
+          if [ -z "$DEVICE_TOKEN" ]; then
+            echo "::error::could not parse a device_token out of sync:device:issue's output"
+            exit 1
+          fi
+
+          # STORAGE_BACKEND=local, no RAILS_ENV -- matching bin/conformance-record's own usage
+          # comment exactly. Backgrounded and detached from this step's own shell so it stays up
+          # for the steps that follow; /tmp/conformance-host.log is what the readiness-wait step
+          # dumps if the host never comes up.
+          STORAGE_BACKEND=local bin/rails server -p 3003 > /tmp/conformance-host.log 2>&1 &
+
+          {
+            echo "SYNC_SERVER_URL=http://127.0.0.1:3003"
+            echo "SYNC_DEVICE_TOKEN=$DEVICE_TOKEN"
+          } >> "$GITHUB_ENV"
+
+      - name: Wait for the host to report ready on /up
+        run: |
+          # /up TOUCHES THE DATABASE (host/config/routes.rb's own comment: "a static 200 is worse
+          # than no healthcheck at all") -- a genuine readiness check, not a bare port ping. It
+          # answers 503 on an unmigrated schema instead of every step below failing with a
+          # confusing connection-refused or 500.
+          for i in $(seq 1 30); do
+            CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3003/up || true)"
+            if [ "$CODE" = "200" ]; then
+              echo "host is ready (took ${i}s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::host never answered 200 on /up within 30s"
+          echo "--- /tmp/conformance-host.log ---"
+          cat /tmp/conformance-host.log || true
+          exit 1
+
+      - name: Run the conformance verifier
+        run: |
+          # This job's shell runs with `-e` (errexit) by default, which would abort the script the
+          # INSTANT the pipeline below reports a real test failure -- before the next line ever
+          # captured PIPESTATUS. `set +e` around exactly the pipeline (and nothing more) is what
+          # lets a red verifier fall through to the diagnostics below instead of vanishing into a
+          # bare nonzero exit with none of this step's own messages printed. `set -e` goes back on
+          # immediately after, so the exit/if logic that follows still fails loudly on its own
+          # terms rather than silently swallowing a problem in ITS OWN commands.
+          set +e
+          bundle exec ruby -Itest test/conformance_test.rb 2>&1 | tee /tmp/conformance-verifier.log
+          # `$?` here would be tee's exit status, not the verifier's -- ${PIPESTATUS[0]} is the
+          # first command in the pipe, which is the one that actually ran the tests. Read it on
+          # the very next line: anything in between would overwrite it.
+          STATUS=${PIPESTATUS[0]}
+          set -e
+
+          SUMMARY="$(grep -E '^[0-9]+ runs, [0-9]+ assertions, [0-9]+ failures, [0-9]+ errors, [0-9]+ skips' /tmp/conformance-verifier.log || true)"
+          if [ -z "$SUMMARY" ]; then
+            echo "::error::could not find a minitest summary line in the verifier's output -- it may not have run at all"
+            exit 1
+          fi
+          RUNS="$(echo "$SUMMARY" | grep -oE '^[0-9]+' || true)"
+          SKIPS="$(echo "$SUMMARY" | grep -oE '[0-9]+ skips' | grep -oE '^[0-9]+' || true)"
+          echo "parsed summary: $RUNS runs, $SKIPS skips (verifier exit status: $STATUS)"
+
+          # ORDER MATTERS: a skip is checked even when STATUS is already 0, because a clean exit
+          # with a skipped test is precisely the false-success shape this job exists to catch --
+          # test/conformance_test.rb's own header comment: nothing INSIDE that suite can assert
+          # about its own skips, so this has to be the thing that does.
+          if [ "$SKIPS" != "0" ]; then
+            echo "::error::the conformance verifier skipped $SKIPS test(s) -- SYNC_SERVER_URL/SYNC_DEVICE_TOKEN did not reach it the way this job intended, so it proved nothing"
+            exit 1
+          fi
+          if [ "$RUNS" = "0" ]; then
+            echo "::error::the conformance verifier ran 0 tests -- test/conformance_test.rb was not found or not loaded"
+            exit 1
+          fi
+
+          exit "$STATUS"
+
+      - name: Stop the standalone host
+        if: always()
+        run: lsof -ti tcp:3003 | xargs -r kill || true

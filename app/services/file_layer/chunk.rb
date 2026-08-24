@@ -237,10 +237,20 @@ module FileLayer
     # WRITE AND MUST NEVER BECOME ONE — `write` above still refuses for exactly the reason it always
     # did. `begin_upload` hands back presigned PUT urls for whichever chunks storage is missing;
     # the CALLER puts bytes there (a browser fetch(), or — for LibraryOutput, which generates the
-    # bytes server-side and has no client to presign for — a direct Sync::Storage::ChunkStore#put, kept
-    # OUTSIDE this method and outside this class entirely; see LibraryOutput#write_chunk's own
-    # comment for why that call was not folded in here). Either way this method's own body never
-    # reads or holds a byte. That is what keeps CLAUDE.md 15 true here.
+    # bytes server-side and has no client to presign for — the port's own `put_chunk` verb below).
+    # Either way this method's own body never reads or holds a byte. That is what keeps
+    # CLAUDE.md 15 true here.
+    #
+    # THIS PARAGRAPH USED TO ARGUE THE OPPOSITE, AND THE REVERSAL IS DELIBERATE. It said the
+    # ChunkStore#put was "kept OUTSIDE this method and outside this class entirely", citing
+    # LibraryOutput#write_chunk's own comment for why it "was not folded in here". That was right
+    # about this METHOD and wrong about the PORT: keeping the call in the maker layer meant the
+    # maker layer named a chunk internal, which is fine while the engine is always in the process
+    # and is a NameError the moment it is not. LIBRARY_BACKEND=chunk_remote made that real --
+    # every addon save raised `uninitialized constant Maker::Addons::LibraryOutput::Sync`, measured
+    # against a live standalone server. `put_chunk` is the resolution: still not folded into
+    # begin_upload, still never a byte-taking `write`, but a port verb the maker layer can call
+    # without knowing which backend answers.
     #
     # `node_id:` IS OPTIONAL, UNLIKE Sync::Commit.begin'S OWN SIGNATURE, WHERE IT IS REQUIRED —
     # because "does this upload create a new file, or become a new version of a specific existing
@@ -330,6 +340,31 @@ module FileLayer
     # (never nudged; they rely on the periodic sync). That asymmetry is pre-existing and is NOT
     # fixed here -- turning it on would start notifying every device of every addon save, a real
     # user-visible change that does not belong in a refactor.
+    # WRITES ONE CHUNK'S BYTES, FOR A CALLER THAT HAS NO CLIENT TO PRESIGN FOR.
+    #
+    # `Maker::Addons::LibraryOutput` generates its bytes server-side, so there is no browser to
+    # hand a presigned URL to. It used to call `Sync::Storage::ChunkStore.current.put` directly --
+    # the maker layer's one sanctioned chunk-internals reference -- which is a NameError in any
+    # deployment that does not load the engine. `LIBRARY_BACKEND=chunk_remote` is exactly that
+    # deployment, and every addon save there raised, measured against a live standalone server.
+    #
+    # THE TWO ADAPTERS CANNOT SHARE ONE IMPLEMENTATION, and that is the whole reason this is a
+    # port verb rather than a helper. FileLayer::ChunkRemote PUTs to `begun.put_urls[hash]`,
+    # because its presigned URL points at a DIFFERENT server. Doing the same here would be a
+    # loopback: an embedded deployment's memory and local stores presign URLs that Rails itself
+    # serves, so a server-side PUT to one re-enters the same Puma pool -- CLAUDE.md 14e's recorded
+    # reentrancy bug, measured at 14-24 second stalls and outright 404s when ADDON_SOURCE_URL
+    # pointed at this app. In-process, the store is simply called.
+    #
+    # `begun:` IS ACCEPTED AND UNUSED, matching how this class already accepts kwargs a given
+    # adapter does not need. It carries the presigned URLs, which only the remote adapter reads;
+    # taking it here keeps ONE signature across the port instead of two that callers must
+    # distinguish between -- which would put the backend branch back in the caller, where this
+    # verb exists to remove it.
+    def put_chunk(user, begun:, hash:, bytes:)
+      Sync::Storage::ChunkStore.current.put(user.id, hash, bytes)
+    end
+
     def finalize_upload(user, commit_id:, verify: true, broadcast: true)
       version, seq = Sync::Commit.finalize(user:, commit_id:, verify:)
       Sync::LibraryChannel.broadcast_change(user, seq) if broadcast && seq

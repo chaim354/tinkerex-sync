@@ -121,6 +121,51 @@ module Conformance
       end
     end
 
+    # Best-effort capture binding for a step about to be overwritten by --force. #match! is the
+    # ONLY thing that ever binds a $capture (see its own comment above); bin/conformance-record's
+    # --force path used to overwrite a step's recorded expectation WITHOUT ever calling it, so a
+    # later step's {{name}} interpolation -- built from a request a human wrote once and never
+    # revisits -- found nothing bound. Reproduced for real: forcing 02-commit.yml crashed on step
+    # 2's `PUT {{drawing_put_url}}` with "no earlier $capture bound this name", because step 1's
+    # recorded `put_urls.<hash>: {"$capture": drawing_put_url}` was discarded unread.
+    #
+    # UNLIKE #match!, THIS NEVER RAISES. --force exists precisely because the live response may no
+    # longer look like the recording it is about to replace, so the shape checks that make #match!
+    # a trustworthy gate (missing key, wrong type, an extra key) would turn this into a second
+    # --force refusal by another name -- exactly what --force is for skipping. A shape disagreement
+    # between the OLD `expected` and the NEW `actual` (a vanished key, a Hash where an Array now
+    # sits, an array that changed length) simply stops that branch's walk: nothing is bound from
+    # underneath it, and nothing is raised. A capture that genuinely cannot be recovered this way
+    # still surfaces -- just later, and more legibly, as the next step's own {{name}} interpolation
+    # raising the same Mismatch it always has, naming the request that needed it, rather than this
+    # method raising about a response shape --force was explicitly told to accept.
+    #
+    # $ref IS DELIBERATELY INERT HERE, NOT REVALIDATED. A $ref checks a value against an earlier
+    # capture; it never introduces a binding of its own, so skipping it costs nothing. Running it
+    # through the same equality check #match_special_form! uses -- and raising on a disagreement --
+    # would smuggle validation back in through a method whose whole job is to not validate. $type
+    # and $absent are inert for the identical reason: neither binds anything even inside #match!.
+    #
+    # CALLED ONCE PER STEP, against that step's OLD expectation and the NEW live response, BEFORE
+    # the expectation is overwritten -- bin/conformance-record's record_scenario is the only
+    # caller. Sequencing is what makes this work: a later step's request is only interpolated
+    # after this has run for every step before it, which is what lets a bound {{drawing_put_url}}
+    # survive a forced re-record.
+    def bind_captures!(expected, actual)
+      if special_form?(expected)
+        operator, argument = expected.first
+        @bindings[argument] = actual if operator == "$capture" && !actual.equal?(NOT_PRESENT)
+      elsif expected.is_a?(Hash) && actual.is_a?(Hash)
+        expected.each do |key, expected_value|
+          actual_value = actual.key?(key) ? actual[key] : NOT_PRESENT
+          bind_captures!(expected_value, actual_value)
+        end
+      elsif expected.is_a?(Array) && actual.is_a?(Array)
+        expected.each_with_index { |expected_value, i| bind_captures!(expected_value, actual[i]) if i < actual.size }
+      end
+      nil
+    end
+
     private
 
     # A hash counts as a special form ONLY when it has exactly one key and that key is one of the

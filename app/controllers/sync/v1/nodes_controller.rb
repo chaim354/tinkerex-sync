@@ -94,16 +94,20 @@ module Sync
         render json: { version_id: version.version_id, seq: }
       end
 
-      # POST /v1/nodes/:node_id/lock — best-effort acquire/refresh. Always 200 with the
-      # status (held + by_me + device_name); the client decides what to do if not by_me.
+      # POST /v1/nodes/:node_id/lock — best-effort acquire/refresh. 200 with the status
+      # (held + by_me + device_name) for any LIVE node_id, whether or not this device wins
+      # the lock; 404 — the same 404 as an unknown node_id — for a tombstoned one
+      # (Sync::Locks.acquire's own comment has the argument for why the two share one answer).
       def lock
         render json: Sync::Locks.acquire(user: current_user, node_id: params[:node_id], device: current_device)
       end
 
-      # POST /v1/nodes/:node_id/unlock — release if this device holds it.
+      # POST /v1/nodes/:node_id/unlock — release if this device holds it. `released:` in the
+      # response says whether this call actually freed a lock (see Sync::Locks.release: a
+      # non-holder's unlock is a documented, honestly-reported no-op, not an error) — the
+      # method no longer hardcodes {released: true} regardless of what Locks.release did.
       def unlock
-        Sync::Locks.release(user: current_user, node_id: params[:node_id], device: current_device)
-        render json: { released: true }
+        render json: Sync::Locks.release(user: current_user, node_id: params[:node_id], device: current_device)
       end
 
       # POST /v1/nodes/:node_id/resolve_conflict

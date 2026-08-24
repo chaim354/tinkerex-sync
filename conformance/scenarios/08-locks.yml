@@ -6,21 +6,24 @@ description: 'POST /v1/nodes/:id/lock, POST /v1/nodes/:id/unlock, and GET /v1/lo
   A''s lock is still live does NOT steal or refresh it -- the response comes back
   held: true, by_me: false, and (the precise proof it wasn''t touched) the exact SAME
   expires_at device A''s own lock call received, captured and $ref''d rather than
-  merely type-checked. Three behaviours here are easy to assume are safer than they
-  are, and this file pins the server''s REAL answer to each rather than the intuitive
-  one: (1) GET /v1/locks reports by_me: false for EVERY caller, always, regardless
-  of which device asks -- Sync::Locks.active passes no device to #status at all, so
-  the list endpoint cannot answer "mine" for anyone (only a device''s OWN lock/unlock
-  call, which is handed its own identity, can); (2) an unlock call from a device that
-  does NOT hold the lock still answers {released: true} -- Sync::Locks.release returns
-  that literal unconditionally, whether or not its own `if` actually destroyed a row
-  -- proven here by device B "releasing" device A''s lock and then reading it right
-  back, unchanged, from GET /v1/locks; and (3) lock/unlock/GET-locks perform NO existence
-  check on node_id at all -- the final step locks a node_id that was never created
-  by any request in this corpus and still gets back a normal 200 held:true. Node ids
-  continue the corpus''s structured-id convention with ''8'' as this file''s leading
-  digit; the never-created id in the last step uses 099 specifically to read as "not
-  a real sequence position" at a glance.'
+  merely type-checked. Three behaviours here were once easy to assume were safer than
+  they actually were; this file now pins the server''s FIXED answer to each: (1) GET
+  /v1/locks reports by_me: true for the device that actually holds a given lock and
+  by_me: false for every other caller -- proven twice, once as device A (the holder)
+  and once as device B (not), reading the identical lock; (2) an unlock call from
+  a device that does NOT hold the lock honestly answers {released: false} rather than
+  an unconditional {released: true} -- proven here by device B "releasing" device
+  A''s lock, getting released: false back, and then reading the lock right back unchanged
+  from GET /v1/locks, proving nothing actually happened; and (3) lock and unlock both
+  404 for a node_id that is not a LIVE node in this user''s tree -- proven twice over:
+  once for a node_id nothing ever created (both verbs, consistent with how every other
+  node-scoped verb in this API -- move/destroy/versions/restore -- treats a missing
+  node), and again for locked-drawing.svg''s own node_id AFTER it is deleted (both
+  verbs again), which gets the IDENTICAL 404 as the never-created case rather than
+  a distinct answer -- this endpoint must never become an oracle a caller could use
+  to learn which node ids were ever real. Node ids continue the corpus''s structured-id
+  convention with ''8'' as this file''s leading digit; the never-created id near the
+  end uses 099 specifically to read as "not a real sequence position" at a glance.'
 steps:
 - name: begin a commit for locked-drawing.svg, as device A (the bootstrap credential)
   request:
@@ -106,11 +109,29 @@ steps:
         "$ref": lock_a_expires_at
       held: true
       node_id: 00000000-0000-4000-8000-000000008001
-- name: GET /v1/locks reports by_me false here TOO, even though this request authenticates
-    as device A, the actual holder -- the list endpoint never learns who is asking
+- name: GET /v1/locks, as device A -- the actual holder -- now reports by_me true
+    for its own lock, because the endpoint passes the caller's device through to Locks.active
   request:
     method: GET
     path: "/v1/locks"
+  expect:
+    status: 200
+    body:
+      locks:
+      - by_me: true
+        device_name: device
+        expires_at:
+          "$ref": lock_a_expires_at
+        held: true
+        node_id: 00000000-0000-4000-8000-000000008001
+- name: the SAME GET /v1/locks, as device B -- not the holder -- reports by_me false
+    for that identical lock, proving the fix answers per-caller rather than a second
+    hardcoded constant
+  request:
+    method: GET
+    path: "/v1/locks"
+    headers:
+      Authorization: Bearer {{device_b_token}}
   expect:
     status: 200
     body:
@@ -121,8 +142,8 @@ steps:
           "$ref": lock_a_expires_at
         held: true
         node_id: 00000000-0000-4000-8000-000000008001
-- name: device B "releases" a lock it never held -- answers released true regardless,
-    but nothing actually changes (proven by the very next read)
+- name: device B "releases" a lock it never held -- now honestly answers released
+    false, and nothing actually changes (proven by the very next read)
   request:
     method: POST
     path: "/v1/nodes/00000000-0000-4000-8000-000000008001/unlock"
@@ -131,8 +152,9 @@ steps:
   expect:
     status: 200
     body:
-      released: true
-- name: GET /v1/locks again -- unchanged; device B's unlock was a no-op
+      released: false
+- name: GET /v1/locks again, still as device A -- unchanged; device B's unlock was
+    a genuine no-op, not just a false claim of one
   request:
     method: GET
     path: "/v1/locks"
@@ -140,7 +162,7 @@ steps:
     status: 200
     body:
       locks:
-      - by_me: false
+      - by_me: true
         device_name: device
         expires_at:
           "$ref": lock_a_expires_at
@@ -162,17 +184,49 @@ steps:
     status: 200
     body:
       locks: []
-- name: locking a node_id NEVER CREATED by any request in this corpus still answers
-    a normal 200 -- lock/unlock perform no existence check on node_id at all
+- name: delete locked-drawing.svg -- tombstoned, not gone; its node_id and version
+    history both survive, only `deleted` flips
+  request:
+    method: DELETE
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008001"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: locking the now-tombstoned locked-drawing.svg answers the SAME 404 as a node_id
+    that was never created -- a deleted file has nothing left to edit, and existence
+    in the table is not the bar; liveness is
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008001/lock"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: unlocking that same tombstoned node_id 404s too, symmetrically
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008001/unlock"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: locking a node_id NEVER CREATED by any request in this corpus now 404s --
+    lock checks node existence before ever touching the lock table
   request:
     method: POST
     path: "/v1/nodes/00000000-0000-4000-8000-000000008099/lock"
   expect:
-    status: 200
+    status: 404
     body:
-      by_me: true
-      device_name: device
-      expires_at:
-        "$type": string
-      held: true
-      node_id: 00000000-0000-4000-8000-000000008099
+      error: not_found
+- name: unlocking that same never-created node_id also 404s, symmetrically -- the
+    existence check applies to both verbs, not just lock
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-000000008099/unlock"
+  expect:
+    status: 404
+    body:
+      error: not_found

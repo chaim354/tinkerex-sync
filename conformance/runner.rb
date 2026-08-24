@@ -16,8 +16,8 @@
 # never catch a Rust rewrite that leaks an internal id or silently drops a deprecated one. The
 # four special forms below ($capture / $ref / $type / $absent), plus a bare literal, are the ONLY
 # ways a recorded expectation can say "this part is allowed to vary" -- five forms, deliberately,
-# and no more without a strong argument (conformance/README.md, a later task, is the normative
-# spec a non-Ruby implementer reads instead of this file).
+# and no more without a strong argument (conformance/README.md is the normative spec a non-Ruby
+# implementer reads instead of this file).
 #
 # USED BY BOTH THE RECORDER AND THE VERIFIER (later tasks), so the two cannot disagree about what
 # "matches" means. Splitting this logic in two would let one drift permissive without the other

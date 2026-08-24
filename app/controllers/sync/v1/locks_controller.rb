@@ -6,8 +6,10 @@ module Sync
       require_capability! :syncable
 
       # GET /v1/locks -> all active edit locks (for the file browser's lock indicators).
+      # Passes current_device so each lock's by_me reflects THIS caller -- omitting it (as this
+      # used to) makes Locks.active default by_me to false for every lock, even the caller's own.
       def index
-        render json: { locks: Sync::Locks.active(user: current_user) }
+        render json: { locks: Sync::Locks.active(user: current_user, device: current_device) }
       end
     end
   end

@@ -10,6 +10,7 @@ module Sync
       @a = Device.register!(user: @user, name: "laptop")
       @b = Device.register!(user: @user, name: "workshop-pi")
       @node = SecureRandom.uuid
+      @user.nodes.create!(node_id: @node, name: "locked.txt", kind: "file")
     end
 
     test "acquire grants a free lock to the requesting device" do
@@ -46,13 +47,20 @@ module Sync
       end
     end
 
-    test "release frees the lock only for its holder" do
+    test "release frees the lock only for its holder, and says so honestly in its return value" do
       Sync::Locks.acquire(user: @user, node_id: @node, device: @a)
-      # B's release is a no-op (not the holder).
-      Sync::Locks.release(user: @user, node_id: @node, device: @b)
+      # B's release is a no-op (not the holder) -- and MUST report that, not a blanket true.
+      s = Sync::Locks.release(user: @user, node_id: @node, device: @b)
+      assert_equal({ released: false }, s, "B never held it, so nothing was released")
       assert @user.file_locks.exists?(node_id: @node), "B can't release A's lock"
-      Sync::Locks.release(user: @user, node_id: @node, device: @a)
+      s = Sync::Locks.release(user: @user, node_id: @node, device: @a)
+      assert_equal({ released: true }, s, "A held it, so this release was real")
       assert_not @user.file_locks.exists?(node_id: @node), "holder releases"
+    end
+
+    test "releasing a node with no lock at all is also an honest no-op, not an error" do
+      s = Sync::Locks.release(user: @user, node_id: @node, device: @a)
+      assert_equal({ released: false }, s)
     end
 
     test "status_for and active reflect only unexpired locks" do
@@ -62,6 +70,60 @@ module Sync
       travel 2.seconds do
         assert_not Sync::Locks.status_for(user: @user, node_id: @node)[:held]
         assert_empty Sync::Locks.active(user: @user)
+      end
+    end
+
+    test "active reports by_me for the device passed in, and false when none is passed" do
+      Sync::Locks.acquire(user: @user, node_id: @node, device: @a)
+      assert Sync::Locks.active(user: @user, device: @a).first[:by_me], "A is the holder"
+      assert_not Sync::Locks.active(user: @user, device: @b).first[:by_me], "B is not"
+      assert_not Sync::Locks.active(user: @user).first[:by_me],
+                 "no device passed at all -- the pre-fix default -- still answers false, never a stale true"
+    end
+
+    test "acquire raises for a node_id nothing ever created, rather than minting a lock for it" do
+      never_created = SecureRandom.uuid
+      assert_raises(ActiveRecord::RecordNotFound) do
+        Sync::Locks.acquire(user: @user, node_id: never_created, device: @a)
+      end
+      assert_not @user.file_locks.exists?(node_id: never_created)
+    end
+
+    test "release raises for a node_id nothing ever created" do
+      never_created = SecureRandom.uuid
+      assert_raises(ActiveRecord::RecordNotFound) do
+        Sync::Locks.release(user: @user, node_id: never_created, device: @a)
+      end
+    end
+
+    test "a tombstoned node is not lockable -- liveness, not mere table presence, is the bar" do
+      deleted_id = SecureRandom.uuid
+      @user.nodes.create!(node_id: deleted_id, name: "gone.txt", kind: "file", deleted: true)
+      assert_raises(ActiveRecord::RecordNotFound) do
+        Sync::Locks.acquire(user: @user, node_id: deleted_id, device: @a)
+      end
+    end
+
+    test "unlock on a tombstoned node also raises -- the same live-node check as acquire" do
+      deleted_id = SecureRandom.uuid
+      @user.nodes.create!(node_id: deleted_id, name: "gone.txt", kind: "file", deleted: true)
+      assert_raises(ActiveRecord::RecordNotFound) do
+        Sync::Locks.release(user: @user, node_id: deleted_id, device: @a)
+      end
+    end
+
+    test "deleting a node out from under a live lock does not itself raise on the lock side" do
+      # SubtreeDelete never touches file_locks (checked: grep app/ lib/ for file_locks finds only
+      # this class and its two controllers) -- tombstoning a node currently locked leaves the lock
+      # row sitting there, orphaned, until its TTL lapses. Documented here, not fixed here: the fix
+      # this class controls is refusing a NEW lock/unlock against a tombstone, not reaching into
+      # SubtreeDelete to sweep an old one. A future lock-cleanup-on-delete is a SubtreeDelete change,
+      # not a Locks one.
+      Sync::Locks.acquire(user: @user, node_id: @node, device: @a)
+      @user.nodes.find_by(node_id: @node).update!(deleted: true)
+      assert @user.file_locks.exists?(node_id: @node), "the row survives the tombstone, orphaned"
+      assert_raises(ActiveRecord::RecordNotFound) do
+        Sync::Locks.acquire(user: @user, node_id: @node, device: @a)
       end
     end
   end

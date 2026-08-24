@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/chaim354/tinkerex-sync/conformance/schema.json",
+  "$comment": "The normative SHAPE of one conformance scenario file (conformance/README.md, a later task, is the normative PROSE spec a non-Ruby implementer reads). Validated against every scenario in Task 3's verifier, so a scenario a human hand-edits into an invalid shape fails loudly at load time rather than producing a confusing runtime error three steps in. This schema governs STRUCTURE only -- it cannot know whether a given request/expectation pair is semantically correct for the real v1 API; only a human review of a RECORDED corpus (see the recorder's own docs) can tell you that. See conformance/runner.rb for the code that actually evaluates an 'expect.body' against a live response -- this file only checks that one is shaped so that code CAN evaluate it.",
+  "title": "Conformance scenario",
+  "type": "object",
+  "required": ["name", "description", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "$comment": "A short, stable identifier for the scenario -- e.g. used to name its recording and to report which scenario a failure belongs to."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "$comment": "Required, not optional, on purpose: a scenario earns a place in this corpus by being reviewed by a human who read what the server actually said (see the repo README's 'recorded, not hand-authored' rule), and a description is where that reviewer states what property the scenario is meant to demonstrate."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["name", "request", "expect"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "request": { "$ref": "#/$defs/request" },
+        "expect": { "$ref": "#/$defs/expectation" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "required": ["method", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "$comment": "The four verbs lib/tinkerex_sync/v1_routes.rb actually draws today (GET/POST/PUT/DELETE -- no PATCH exists on any of the 25 endpoints). Extend this enum in the same commit that adds a route using a fifth verb, not before -- an enum wider than the real API would let a scenario author's typo (e.g. a stray PATCH meant to be a PUT) validate cleanly and fail only much later, against a live server, far from the mistake.",
+          "enum": ["GET", "POST", "PUT", "DELETE"]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/",
+          "$comment": "An absolute request path, e.g. \"/v1/nodes/{{node}}/move\" -- not a route name and not relative to namespace :v1. May contain {{name}} placeholders; conformance/runner.rb#interpolate is what resolves them, from values a PRIOR step's expect.body bound with $capture."
+        },
+        "query": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "number", "boolean"] },
+          "$comment": "Query-string parameters. Values may contain {{name}} placeholders (they are plain strings/numbers/booleans until interpolation runs, never the expect-only $capture/$ref/$type/$absent vocabulary -- that vocabulary describes what is allowed to vary in a RESPONSE, and a request this runner sends is never itself allowed to vary)."
+        },
+        "body": {
+          "$comment": "The request body, whatever shape the endpoint being called expects (typically an object, e.g. a commit's manifest). Deliberately unconstrained here -- 25 endpoints have 25 different bodies, and this schema does not attempt a per-endpoint shape. Like `query`, string values inside it may contain {{name}} placeholders; it never uses the $-prefixed expectation vocabulary."
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "$comment": "Extra request headers beyond whatever the runner sets by default (device-token auth, Content-Type). Rarely needed; present for the few scenarios that must exercise a header directly, e.g. a conditional request."
+        }
+      }
+    },
+    "expectation": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599,
+          "$comment": "An HTTP status code, matched by plain integer equality -- there is no $type/$capture/$ref form for status because every one of the 25 endpoints returns a fixed, known status per outcome (200/201/404/422/501/...); a status code that genuinely varies per run would be a sign the scenario is testing the wrong thing, not a case this format needs to express."
+        },
+        "body": {
+          "$ref": "#/$defs/matcherValue",
+          "$comment": "Matched by conformance/runner.rb's Conformance::Matcher#match!, recursively, EXACTLY in both directions -- an actual response carrying a key this expectation does not name is a mismatch, not a pass (see runner.rb's header comment for why). $capture/$ref/$type/$absent are the only escape hatches; see matcherValue below."
+        }
+      }
+    },
+    "matcherValue": {
+      "$comment": "Any JSON value that Conformance::Matcher#match! can compare an actual response value against: a literal (matched by exact equality, recursively for arrays/objects), or one of the four special forms. This schema deliberately does NOT attempt to reject every malformed near-miss of a special form (e.g. `{\"$capture\": 123}`, a capture with a non-string name) -- doing that precisely would require excluding `plainObject` whenever an object happens to look like a broken special form, which JSON Schema can express but only by inverting most of this definition with `not`, for a case no scenario a human would actually author is likely to produce. A malformed special form that slips past this schema still fails loudly at match time (Conformance::Matcher raises Mismatch, or Ruby raises trying to use a non-string as a binding name) -- later, not silently.",
+      "anyOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "type": "array", "items": { "$ref": "#/$defs/matcherValue" } },
+        { "$ref": "#/$defs/captureForm" },
+        { "$ref": "#/$defs/refForm" },
+        { "$ref": "#/$defs/typeForm" },
+        { "$ref": "#/$defs/absentForm" },
+        { "$ref": "#/$defs/plainObject" }
+      ]
+    },
+    "captureForm": {
+      "type": "object",
+      "required": ["$capture"],
+      "additionalProperties": false,
+      "properties": {
+        "$capture": { "type": "string", "minLength": 1 }
+      }
+    },
+    "refForm": {
+      "type": "object",
+      "required": ["$ref"],
+      "additionalProperties": false,
+      "properties": {
+        "$ref": { "type": "string", "minLength": 1 }
+      },
+      "$comment": "This property is named literally \"$ref\" -- a scenario-file field, not a JSON Schema $ref keyword. It is nested under `properties`, where JSON Schema reads it as an ordinary key name, so there is no collision with schema-level $ref resolution."
+    },
+    "typeForm": {
+      "type": "object",
+      "required": ["$type"],
+      "additionalProperties": false,
+      "properties": {
+        "$type": {
+          "type": "string",
+          "enum": ["string", "integer", "boolean", "array", "object", "null"],
+          "$comment": "Must stay byte-identical to conformance/runner.rb's Matcher::TYPE_CHECKS keys -- this schema cannot import that list, so the two are two descriptions of one vocabulary, same as db/engine_schema.rb's relationship to db/schema.rb one repo over (CLAUDE.md section 14j): kept in sync by a human, not by construction."
+        }
+      }
+    },
+    "absentForm": {
+      "type": "object",
+      "required": ["$absent"],
+      "additionalProperties": false,
+      "properties": {
+        "$absent": {
+          "const": true,
+          "$comment": "Only `true` is a meaningful value here -- the vocabulary has no defined behaviour for `$absent: false`, so a scenario author who writes it gets a schema validation error instead of silently authoring a no-op."
+        }
+      }
+    },
+    "plainObject": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/matcherValue" },
+      "$comment": "An ordinary object to match key-by-key -- what a hash with zero keys, or more than one key, or one key not starting with \"$\", always is. Conformance::Matcher#special_form? draws this exact line (exactly one key, and that key one of the four operators); this branch is what keeps a real API field that happens to be a single-key object (unlikely, but not this schema's business to forbid) representable."
+    }
+  }
+}

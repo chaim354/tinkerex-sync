@@ -1,0 +1,36 @@
+---
+name: 01-enrolment
+description: Device enrolment and whoami. This host has no self-service login (see
+  V1::DevicesController's own comment) -- the bootstrap device token is minted out-of-band
+  by an operator running `bin/rails sync:device:issue`, the same shape as any other
+  server credential, and every request below authenticates with it. First whoami confirms
+  that bootstrap credential's identity; then POST /v1/devices uses that same credential
+  to enrol a second, sibling device for the same user -- the mechanism the rest of
+  this corpus relies on for proof that device-token auth works exactly as recorded
+  here.
+steps:
+- name: whoami confirms the bootstrap device's identity
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$type": integer
+      head_seq: 0
+      user_id:
+        "$type": integer
+- name: enrol a second device from the bootstrap credential
+  request:
+    method: POST
+    path: "/v1/devices"
+    body:
+      name: conformance-second-device
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$type": integer
+      device_token:
+        "$type": string

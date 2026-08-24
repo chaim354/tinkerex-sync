@@ -41,8 +41,9 @@
 # exact pattern and what it is deliberately narrow about. Every $type this run writes is reported
 # at the end -- not filed anywhere, just printed -- because $type is an admission that the
 # contract does not pin something, and a reviewer should look at each one and ask whether it
-# should have been a $capture/$ref pair instead (conformance/README.md, a later task, is where
-# that review process is written down for good; this comment is the whole of it for now).
+# should have been a $capture/$ref pair (or a literal) instead -- conformance/README.md's own
+# "Reviewing what got written" section is where that review process is written down for good,
+# with two real examples of the recorder guessing wrong in both directions.
 #
 # --force DISCARDS EVERY STEP'S RECORDED expect:, INCLUDING ANY HUMAN-ADDED $capture, AND
 # REPLACES IT WITH A FRESH GUESS FROM THE LIVE RESPONSE -- AS IF THE STEP HAD NEVER BEEN RECORDED

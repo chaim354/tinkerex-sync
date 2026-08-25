@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Build + push this repo's own image (the Dockerfile at the root, host/ as the app) to ghcr, under
+# a STABLE tag that exists independently of this repo's own `kamal deploy`.
+#
+# THAT DISTINCTION IS THE WHOLE REASON THIS SCRIPT EXISTS. config/deploy.yml here runs this app as
+# ITS OWN kamal service (service: tinkerex-sync) and, when `kamal deploy` is actually run, tags the
+# image by kamal's own per-deploy version (the git SHA kamal resolves internally) -- never
+# `:latest`, and never on a schedule anyone but that command controls. A Kamal ACCESSORY (what the
+# maker app, chaim354/tinkerex, would run this as, beside its own three LIBRARY_BACKEND
+# deployments) never builds anything: `kamal accessory boot/reboot` only PULLS a named image, the
+# same way it does today for the boxes/openscad sidecars and the addons bundle host. Until this
+# script, nothing produced the tag that pull needs -- "nothing publishes an image of it" was true
+# in exactly that sense, even though this repo's own standalone deploy had (separately) pushed
+# SHA-versioned images under the same repository name.
+#
+# Mirrors chaim354/tinkerex's bin/build-boxes-sidecar / bin/build-openscad-sidecar: same registry,
+# same 1Password item, same two-tag-plus-revision-label shape. Run from THIS repo's root, same as
+# those two.
+#
+# The ghcr token comes from 1Password via bin/secret -- no export needed. Export
+# KAMAL_REGISTRY_PASSWORD first if you want to override it. `set -e` aborts here if the read fails
+# (unlike kamal itself, whose backticks discard exit status -- see the maker app's
+# bin/secrets-preflight and its CLAUDE.md §14g).
+#
+# Once the maker app's config/deploy.yml grows an accessory pointing at this image (not wired up
+# yet -- this script only publishes it), the roll command from THAT repo would be:
+#   bin/kamal accessory reboot sync
+set -euo pipefail
+
+KAMAL_REGISTRY_PASSWORD="$(bin/secret KAMAL_REGISTRY_PASSWORD 'op://tinkerex/ghcr.io/password')"
+REPO="ghcr.io/chaim354/tinkerex-sync"
+IMAGE="$REPO:latest"
+
+# PROVENANCE -- the source commit rides inside the image as an OCI label, so a container already
+# running can name the build it came from with no registry access and no tag enumeration:
+#
+#   docker inspect <container> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+#
+# A SHA TAG ALONE CANNOT ANSWER THAT (full argument in bin/build-boxes-sidecar over in the maker
+# repo): the OCI distribution API has no digest->tag reverse lookup, and `kamal accessory details`
+# shells out to `docker ps`, which prints the RUN REFERENCE -- `:latest` -- never a digest. The
+# label rides inside the image itself, so it survives tag GC or a moved `:latest`; the `$REVISION`
+# tag below is registry inventory alongside it, not a substitute for it.
+#
+# DO NOT SPELL THIS `git describe --dirty`. `--dirty` only consults TRACKED files, and this
+# Dockerfile's final stage does `COPY . .` from the working tree (build context = repo root, not a
+# subdirectory -- the Gemfile at the root needs the gemspec and lib/tinkerex_sync/version.rb
+# alongside it, and host/ needs the gem source next to it). An untracked file would build into the
+# image while `--dirty` kept reporting a clean SHA. `git status --porcelain` lists untracked files
+# too, so it is what decides -- same fix, same reasoning, as both sidecar scripts.
+REVISION="$(git rev-parse HEAD)"
+if [ -n "$(git status --porcelain)" ]; then
+  REVISION="$REVISION-dirty"
+fi
+
+echo "$KAMAL_REGISTRY_PASSWORD" | docker login ghcr.io -u chaim354 --password-stdin
+
+# THE UNRAID BOX IS amd64; THIS DEV MACHINE MAY NOT BE (Apple Silicon is arm64). A plain
+# `docker build` tags and pushes an arm64 image just as happily as an amd64 one -- it does not
+# fail here, it fails on the box as an exec-format error, far from this line. --platform forces
+# the target explicitly; buildx cross-builds via QEMU emulation when the host arch differs,
+# matching config/deploy.yml's own `builder: arch: amd64` for this same app.
+docker buildx build --platform linux/amd64 \
+  --label "org.opencontainers.image.revision=$REVISION" \
+  -t "$IMAGE" -t "$REPO:$REVISION" --push .
+
+echo "pushed $IMAGE (revision $REVISION)"

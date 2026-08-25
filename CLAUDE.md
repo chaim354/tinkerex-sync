@@ -2,36 +2,35 @@
 
 Project context for an AI coding agent (Claude Code) and human developers.
 
-> ## READ THIS FIRST: this file was inherited, not audited
+> **Provenance.** Sections 1–4 were extracted from `chaim354/tinkerex`'s CLAUDE.md on 2026-08-25,
+> when that file was audited for the repo separation, and **audited against this repository's code
+> on the same day**: every referenced path and symbol resolves, and every invariant in §4 was
+> checked against the code that implements it (`Chunk#mkdir`/`#move` really do go through
+> `Sync::Mutation.apply`; `Commit.finalize` really does take `next_seq!` first inside the
+> transaction; `sweep_orphans!` really is compare-and-swap and `prune_version!` claim-then-decrement;
+> `Sync::Version.table_name` really reads `"versions"`, asserted by `boot_test.rb`). Nothing in §4
+> was found wrong. Sections 5–9 describe what is only true HERE and were written from this repo.
 >
-> **Everything below was extracted from `chaim354/tinkerex` CLAUDE.md on 2026-08-25** and has
-> **NOT been verified against this repository's current code.** It was written while the sync
-> engine was a *gem embedded in the maker app*, so it describes that arrangement — a host that
-> might configure a share/s3 backend, capability seams built for that host, a dummy app standing
-> in for it. This repo has moved on: it has its own host app under `host/`, a
-> `POST /v1/admin/libraries` provisioning endpoint, a conformance corpus, and its own deploy.
-> None of that is described here yet.
->
-> **Treat every rule below as a lead, not as ground truth.** Verify against the code before
-> relying on one — that is this project's own standing rule (`probe over argument`), and it
-> applies with special force to a document that arrived by relocation. As each area is verified,
-> rewrite it in place and delete this warning for that section.
->
-> What IS known good, because it was checked from the maker-app side on 2026-08-25:
-> - This repo is **not a dependency of `tinkerex`**. No gem, no `Gemfile.lock` pin, no
->   cross-repo schema guard. The two are coupled by the **wire** only.
-> - The maker app is a **client** of eight endpoints here: `/v1/tree`, `/v1/changes`,
->   `/v1/commit`, `/v1/commit/:id/finalize`, `/v1/chunks/download`, `/v1/nodes`,
->   `/v1/trash/:id/restore`, and `/v1/admin/libraries`.
-> - What checks that coupling is `bin/ci test-chunk-remote` **in the maker app** (it boots this
->   repo's host app via `bin/sync-server` and runs the full maker suite against it), plus this
->   repo's own conformance corpus.
-> - This repo runs as the **`sync` Kamal accessory**, not a service — that is what gives it the
->   fixed container name `tinkerex-sync`, the stable network alias the maker app puts in
->   `CHUNK_REMOTE_URL`. A Kamal *service* gets a per-deploy `<name>-<sha>` name, so
->   `http://tinkerex-sync:3000` does not resolve to one (measured: 000). A standalone service
->   deployed from this repo's own `deploy.yml` **collides** with that accessory on the
->   `service=tinkerex-sync` label — pick one shape per box.
+> That audit does **not** cover the historical measurements quoted in §4 — "14–24 second stalls",
+> "79 of 80 tests green" — which record past observations in the other repo, not current state.
+
+---
+
+## 0. Orientation — the three things that surprise people
+
+1. **This repo is destined to be rewritten in Rust**, and `conformance/` exists so that rewrite can
+   be graded against **the wire** rather than by porting the Ruby tests — which would bind the two
+   implementations by shared code, the same failure shape as a fake that shares the real code's own
+   bug (§5). If you are changing endpoint behaviour, the corpus is the thing that must move with
+   you. See §7.
+2. **The v1 API is 26 endpoints; the maker app calls only 8 of them.** Do not infer the surface
+   from what `chaim354/tinkerex` uses — versions, symlinks, search, locks, conflicts, share links
+   and the blob PUT/GET all exist for *devices*, which are the primary client. Count them yourself:
+   `conformance/README.md` ends with the command, and it reports 26.
+3. **This repo is BOTH a mountable engine and a standalone app.** `app/` + `lib/` are the engine;
+   **`host/` is a real Rails app that mounts it** and supplies the host obligations §4c lists —
+   `User`, `Node`, `Device`, `ApplicationRecord`, `ApplicationJob`, `ApplicationCable`. `test/dummy`
+   is a *third* thing: a minimal host that exists to prove the engine boots without any of this.
 
 ---
 
@@ -105,10 +104,13 @@ should probably move here.
 
 ---
 
-## 4. Invariants (inherited — verify before relying on one)
+## 4. Invariants (inherited from the maker app, and audited here 2026-08-25)
 
 Each line below cost a real bug **in the maker app's repo, while this engine lived there**.
 Section numbers in the original (`§14a`, `§14e`, `§14j`) are given so the history is traceable.
+**Every rule here was checked against this repository's code on 2026-08-25 and none was wrong** —
+which is the expected result, because these rules were always about the engine's own code, and the
+engine moved wholesale.
 
 ### 4a. The `FileLayer::Chunk` adapter (`app/services/file_layer/chunk.rb`) — was §14a
 
@@ -273,39 +275,106 @@ This adapter is the sanctioned in-process door onto the engine. The maker app sh
 - **The suite being green is not evidence a guard works** if the guard's precondition is never
   established in test. Drive the real request.
 
-## 6. Cheatsheet
+---
+
+## 6. The host app (`host/`)
+
+`app/` and `lib/` are the **engine**. `host/` is a real Rails app that mounts it and supplies
+exactly the obligations §4c names — nothing more:
+
+| host/ supplies | why the engine cannot |
+|---|---|
+| `User`, `Node`, `Device` | The engine owns versions/chunks/changelog; identity and the tree are the host's (see §4c on why `Device` in particular). |
+| `ApplicationRecord`, `ApplicationJob`, `ApplicationCable::Channel` | Every `Sync::` class names these explicitly (Phase A qualified them so `isolate_namespace` could not misresolve them). |
+| `limits_concurrency` | **solid_queue's extension, not core ActiveJob** — `Sync::RetentionJob` calls it. The gemspec deliberately does not depend on solid_queue; the host picks its queue adapter. |
+| `config/routes.rb` calling `Sync.draw_v1_routes` | The engine is a **drawer, not a mount** (§4c). |
+
+`host/` is what `bin/build-and-push` packages, what the `sync` Kamal accessory runs, and what the
+maker app's `bin/sync-server` boots for `bin/ci test-chunk-remote` over there.
+
+**`test/dummy` is a THIRD app and is not `host/`.** It is a minimal host whose whole job is to
+prove the engine boots in a process that has never loaded a maker layer — which is the only thing
+that can catch the `isolate_namespace` table-prefix trap. `boot_test.rb` asserts
+`Sync::Version.table_name == "versions"` there. Do not merge the two: `host/` is a product,
+`test/dummy` is an instrument.
+
+---
+
+## 7. The conformance corpus, and the Rust rewrite it exists for
+
+**This server is destined to be rewritten in Rust.** `conformance/` is how that rewrite gets graded
+— against **recorded HTTP exchanges**, not by porting these Ruby tests, which would bind the two
+implementations by shared code rather than by the wire. `conformance/README.md` is written for *an
+implementer who does not read Ruby* and is the authority on the format; this section only says what
+a change in *this* repo owes it.
+
+- **Eleven scenarios** (`conformance/scenarios/01-enrolment.yml` … `11-admin.yml`), a `runner.rb`,
+  and a `schema.json`.
+- **THEY SKIP UNLESS `SYNC_SERVER_URL` IS SET**, because they drive a **real running server** over
+  HTTP. `bundle exec rake test` on its own reports **12 skips — 11 of them the entire corpus**, plus
+  one Postgres-only pooler probe. A green local run therefore proves nothing about the wire.
+- **CI closes that hole two ways**, and both matter. It **boots a real server** (127.0.0.1:3003)
+  and points `SYNC_SERVER_URL` at it, so the corpus genuinely runs there rather than skipping; and
+  it then **parses the run's own summary line**, failing the step on a nonzero skip count *or on
+  zero runs at all* — the emptier failure, which otherwise reports a clean "0 runs, 0 skips" that
+  looks exactly like success. Minitest cannot let one test assert about another's skip, so the
+  guarantee has to live in the job. If you make scenarios skip, CI goes red rather than quiet.
+- **A change to endpoint behaviour must move the corpus with it** (`bin/conformance-record`), and
+  the README's own review step is not optional — it is what makes a *recorded* corpus trustworthy
+  rather than merely self-consistent.
+
+---
+
+## 8. Build, deploy, and CI
 
 ```sh
-bundle install && bundle exec rake test
-
-# Boot the host app (the maker app's bin/sync-server does this too, on $SYNC_PORT, default 3002)
+bundle install && bundle exec rake test        # 254 runs / 755 assertions / 12 skips (see §7)
 cd host && bin/rails db:prepare && bin/rails server
 
-# Real S3/SeaweedFS chunk storage (presigned PUT/GET). THESE ARE THIS REPO'S env vars —
-# setting them on the maker app does nothing at all.
-STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.8:8333 CHUNK_BUCKET=my-bucket \
-  CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret
+# Run the conformance corpus for real (otherwise all 11 scenarios skip):
+SYNC_SERVER_URL=http://localhost:3000 bundle exec rake test
 
-# SYNC_VERIFY_FINALIZE=0: finalize's verify-the-bytes-landed check defaults ON, but the client
-# integration suites move chunk bytes through SharedDirIO, not this server's store — so the
-# server cannot see them.
+# Count the real endpoint surface rather than trusting a number:
+cd host && bin/rails runner '
+  set = ActionDispatch::Routing::RouteSet.new
+  set.draw { namespace(:v1) { Sync.draw_v1_routes(self) } }
+  puts set.routes.to_a.size'                   # 26
 ```
 
-**Deploy:** this repo runs as the **`sync` Kamal accessory** on the maker app's box (see the
-warning at the top of this file for why accessory-not-service is load-bearing). It is a **second
-database on that box**, known to the maker repo's backup scripts as `sync`:
+**`bin/build-and-push` exists because an ACCESSORY NEVER BUILDS.** `kamal accessory boot/reboot`
+only *pulls* a named image. This repo's own `config/deploy.yml` runs it as its own kamal **service**
+(`service: tinkerex-sync`) and tags by kamal's per-deploy version — never `:latest`. So until this
+script, nothing produced the stable tag the maker app's accessory needs to pull. Read §0's warning
+about accessory-vs-service alongside it: **a standalone service deployed from this repo's own
+`deploy.yml` collides with that accessory on the `service=tinkerex-sync` label. One shape per box.**
+
+**CI: self-hosted runners only, never `*-latest`** — GitHub bills only hosted runners. `.github/
+workflows/ci.yml` targets `[self-hosted, macos]`.
+
+> **`ci.yml`'s own header comment is STALE and contradicts reality (found 2026-08-25).** It says
+> "this repository has NO registered runner as of extraction, so this workflow is
+> queued-and-cancelled rather than passing." That was true at extraction and is **not true now**:
+> `charless-MBP-maker-mac` is registered and **online**, and CI has run successfully here at least
+> four times (23–25 s per run), including on the PR that added this file. Verify with
+> `gh api repos/chaim354/tinkerex-sync/actions/runners` — it needs an **admin-scoped** token and
+> 403s from inside Actions. The comment should be corrected; it is left standing only because
+> changing workflow prose was out of scope for the audit that found it.
+
+**Two env knobs that belong to THIS repo and do nothing on the maker app:**
 
 ```sh
-bin/backup-db sync                                   # run from the maker app repo
-bin/restore-db sync <archive> --into rehearsal --yes
+# Real S3/SeaweedFS chunk storage (presigned PUT/GET)
+STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.8:8333 CHUNK_BUCKET=my-bucket \
+  CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret
 ```
 
-**AN ACCESSORY HAS NO PROXY REGISTRATION UNLESS GIVEN ONE.** `sync` declares no `port:` and no
-`proxy:` — correct, since only another container on the kamal network talks to it — but that
-breaks any tool probing health by Host header. Probe from INSIDE it:
-`docker exec tinkerex-sync curl localhost:3000/up`.
+`SYNC_VERIFY_FINALIZE=0` — finalize's verify-the-bytes-landed check defaults **ON**, but the
+desktop client's integration suites move chunk bytes through `SharedDirIO`, not this server's
+store, so the server cannot see them and finalize would refuse a commit that is actually fine.
 
-## 7. Related repos
+---
+
+## 9. Related repos
 
 | repo | role |
 |---|---|

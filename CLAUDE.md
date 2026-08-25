@@ -83,7 +83,18 @@ direct to storage (chunk bytes via presigned URLs).
   silently dropping an edit. A base that IS current is a clean fast-forward.
 
 Normative wire spec: `docs/sync-protocol.md` in the maker-app repo (`chaim354/tinkerex`) — it
-should probably move here.
+should probably move here; both sibling CLAUDE.md files currently point at it there, so moving it
+means updating them in the same change.
+
+**Implementation notes: `docs/SYNC_SERVER.md`**, adopted from the maker app on 2026-08-25 (it
+described this code, which had stopped being there). Read its pooler section with the correction
+attached to it: `Sync::PostgresPoolerCheck` is here, correct and tested, but **nothing invokes it**
+— `host/config/initializers/` holds only `limits_concurrency_shim.rb`, and the initializer that
+used to run the probe was deleted with the extraction. The `next_seq!` row lock genuinely does
+require session- or transaction-mode pooling (§4b); what is missing is the boot check that would
+catch a statement-mode pooler, not the constraint itself. Wiring it is a deliberate call — a probe
+that REFUSES to boot takes a deployment down exactly when it is misconfigured, which is its job and
+not a switch to flip in passing.
 
 ---
 

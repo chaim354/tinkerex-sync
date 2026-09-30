@@ -1,0 +1,252 @@
+---
+name: 15-share-links-edge
+description: 'The share-link edges 10-share-links.yml leaves open. Three malformed
+  creates (a non-date expires_at string, a bare number, a missing version_id) recorded
+  exactly as the reference server answers them -- docs/sync-protocol.md section 13
+  says the unparseable case is unverified, so this file is where it becomes verified
+  (201, no expiry); do not change that behaviour without re-recording here. The bare
+  number is recorded AFTER a fix: before 2026-09-30 it was stored as a raw integer
+  in the datetime column and the link answered 500 on every redeem (and aborted its
+  owner''s retention pass), which this file found; a non-string now means no expiry,
+  and the redeem that follows proves the row is usable. Then a link for a version
+  whose NODE is tombstoned: the link is minted from the version, not the node, so
+  it is created and redeemable, and a link created before the delete keeps working
+  afterwards -- a shared URL does not break because its owner tidied up. An expired
+  link refuses the download endpoint as well as the redeem, an unknown token and an
+  unknown link id are plain 404s, and revoking a link twice answers 204 both times
+  -- revocation is idempotent, not a claim about the link''s prior state.'
+steps:
+- name: begin sl-edge.txt
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000f002
+      node_id: 00000000-0000-4000-8000-00000000f001
+      parent_node_id:
+      name: sl-edge.txt
+      base_version_id:
+      size: 16
+      manifest:
+      - hash: eeab89367a14063862bdfd7532e17b67bb11ddafd6bdf9af57e4b1825edd5052
+        offset: 0
+        length: 16
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000f002
+      missing:
+      - eeab89367a14063862bdfd7532e17b67bb11ddafd6bdf9af57e4b1825edd5052
+      put_urls:
+        eeab89367a14063862bdfd7532e17b67bb11ddafd6bdf9af57e4b1825edd5052:
+          "$capture": sl_put_url
+- name: upload its bytes
+  request:
+    method: PUT
+    path: "{{sl_put_url}}"
+    body: share edge bytes
+  expect:
+    status: 200
+- name: finalize
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-00000000f002/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": sl_version_id
+- name: create a link with an unparseable expires_at
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000f001
+      version_id: "{{sl_version_id}}"
+      expires_at: not-a-date
+  expect:
+    status: 201
+    body:
+      expires_at:
+      id:
+        "$type": integer
+      token:
+        "$type": string
+      version_id:
+        "$ref": sl_version_id
+- name: create a link with a numeric expires_at
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000f001
+      version_id: "{{sl_version_id}}"
+      expires_at: 12345
+  expect:
+    status: 201
+    body:
+      expires_at:
+      id:
+        "$type": integer
+      token:
+        "$capture": sl_numeric_token
+      version_id:
+        "$ref": sl_version_id
+- name: the numeric-expiry link redeems -- it never expires, it is not a poisoned
+    row
+  request:
+    method: GET
+    path: "/v1/share/{{sl_numeric_token}}"
+  expect:
+    status: 200
+    body:
+      manifest:
+      - hash: eeab89367a14063862bdfd7532e17b67bb11ddafd6bdf9af57e4b1825edd5052
+        length: 16
+        offset: 0
+      name: sl-edge.txt
+      node_id:
+        "$type": string
+      version_id:
+        "$type": string
+- name: create a link with no version_id at all
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000f001
+  expect:
+    status: 400
+    body:
+      error: 'param is missing or the value is empty or invalid: version_id'
+- name: create a link that expires far in the future
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000f001
+      version_id: "{{sl_version_id}}"
+      expires_at: '2099-01-01T00:00:00Z'
+  expect:
+    status: 201
+    body:
+      expires_at: '2099-01-01T00:00:00.000Z'
+      id:
+        "$capture": sl_future_id
+      token:
+        "$capture": sl_future_token
+      version_id:
+        "$ref": sl_version_id
+- name: tombstone the node the links point at
+  request:
+    method: DELETE
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000f001"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: a NEW link for the tombstoned node's version is still minted
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000f001
+      version_id: "{{sl_version_id}}"
+  expect:
+    status: 201
+    body:
+      expires_at:
+      id:
+        "$type": integer
+      token:
+        "$type": string
+      version_id:
+        "$ref": sl_version_id
+- name: the earlier link still redeems after the delete
+  request:
+    method: GET
+    path: "/v1/share/{{sl_future_token}}"
+  expect:
+    status: 200
+    body:
+      manifest:
+      - hash: eeab89367a14063862bdfd7532e17b67bb11ddafd6bdf9af57e4b1825edd5052
+        length: 16
+        offset: 0
+      name: sl-edge.txt
+      node_id: 00000000-0000-4000-8000-00000000f001
+      version_id:
+        "$ref": sl_version_id
+- name: and still hands out a hydration URL
+  request:
+    method: POST
+    path: "/v1/share/{{sl_future_token}}/download"
+    body:
+      hashes:
+      - eeab89367a14063862bdfd7532e17b67bb11ddafd6bdf9af57e4b1825edd5052
+  expect:
+    status: 200
+    body:
+      urls:
+        eeab89367a14063862bdfd7532e17b67bb11ddafd6bdf9af57e4b1825edd5052:
+          "$type": string
+- name: create an already-expired link
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000f001
+      version_id: "{{sl_version_id}}"
+      expires_at: '2020-01-01T00:00:00Z'
+  expect:
+    status: 201
+    body:
+      expires_at: '2020-01-01T00:00:00.000Z'
+      id:
+        "$type": integer
+      token:
+        "$capture": sl_expired_token
+      version_id:
+        "$ref": sl_version_id
+- name: the expired link refuses the download endpoint too
+  request:
+    method: POST
+    path: "/v1/share/{{sl_expired_token}}/download"
+    body:
+      hashes:
+      - eeab89367a14063862bdfd7532e17b67bb11ddafd6bdf9af57e4b1825edd5052
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: an unknown token
+  request:
+    method: GET
+    path: "/v1/share/this-token-was-never-minted"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: revoking an unknown link id
+  request:
+    method: DELETE
+    path: "/v1/share_links/999999"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: revoke the future link
+  request:
+    method: DELETE
+    path: "/v1/share_links/{{sl_future_id}}"
+  expect:
+    status: 204
+- name: revoking it again
+  request:
+    method: DELETE
+    path: "/v1/share_links/{{sl_future_id}}"
+  expect:
+    status: 204

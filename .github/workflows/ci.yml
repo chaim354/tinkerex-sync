@@ -84,6 +84,8 @@ jobs:
       # bootstrap device's email above, nothing in the conformance wire format lets a scenario file
       # interpolate a CI run id into a request body; SYNC_ADMIN_TOKEN below is a fixed, checked-in
       # value for the identical reason (see conformance/scenarios/11-admin.yml's own description).
+      # 14-tenancy.yml provisions a SECOND fixed email (tenant-b@tinkerex-sync.test) through the same
+      # door, for the same reason, and is the second file that makes the wipe below non-optional.
       # That file's first successful step, "a valid admin token provisions a new library", expects
       # 201 -- the SECOND time this job ever ran that exact request against a reused database it
       # would get 409 instead (email_taken), and a corpus that only passes on a job's first-ever

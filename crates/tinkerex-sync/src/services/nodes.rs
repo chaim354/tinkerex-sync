@@ -140,7 +140,7 @@ pub async fn symlink(db: &Db, user_id: i64, p: SymlinkParams, now: Timestamp) ->
         Some(text) => Some(
             base64::engine::general_purpose::STANDARD
                 .decode(text)
-                .map_err(|e| ApiError::Unprocessable(format!("invalid base64: {e}")))?,
+                .map_err(|_| ApiError::Unprocessable("invalid base64".into()))?,
         ),
         None => None,
     };

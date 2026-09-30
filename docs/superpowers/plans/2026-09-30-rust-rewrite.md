@@ -47,7 +47,7 @@ that each cost a real bug). Where this plan and a recorded scenario disagree, th
 | **The deployed host schedules no jobs.** `host/config/` has no `recurring.yml`/`queue.yml`; nothing enqueues `Sync::RetentionJob`, `Sync::ChunkReaperJob` or `Sync::PendingCommitReaperJob`. `RETENTION_POLICY` defaults to `keep_all`. | GC/retention/reapers are ported for **parity of mechanism**, but *enabling* them in production is a behaviour change with its own dry-run step (§7). Nothing about cutover depends on them. |
 | `Sync::Hooks` has **no subscriber** on the standalone host; `FileLayer::Chunk` (682 lines) is an in-process Ruby door the maker app no longer loads (`LIBRARY_BACKEND=chunk` is refused there); `Sync::V1::CapabilityGate` always answers "available" on a bare host. | None of the three is ported. The 501 shape becomes unreachable, which the wire spec §7 explicitly permits. |
 | The only credential is `SHA256(token)` hex against `devices.token_digest`; tokens are `urlsafe_base64(32)` (43 chars). The `local` blob URLs are `HMAC-SHA256(SECRET_KEY_BASE, "user\nhash\nexp")` hex in `?exp=&sig=`. | Both are reproduced exactly, with the **same env values**, so every existing device token and every presigned URL in flight stays valid across the swap. |
-| The Rust client subscribes on `/cable` with identifier `{"channel":"LibraryChannel"}` (`sync-client/src/lib.rs`, `watch_library`), while the server's channel class is `Sync::LibraryChannel`. Whether Action Cable accepts that identifier today is **unverified** (the desktop daemon falls back to polling either way). | Phase 0 probes it against the Ruby host. The Rust `/cable` accepts **both** spellings regardless (§4 task 3.1). |
+| **Measured 2026-09-30 (0.2):** the Ruby host refuses any `/cable` connection with no `Origin` header — which is what `sync-client::watch_library` sends — with a 404 ("Request origin not allowed"), so the deployed daemon has only ever polled. With an allowed origin, the client's identifier `{"channel":"LibraryChannel"}` is `welcome`d and never confirmed (the class is `Sync::LibraryChannel`); the namespaced spelling is confirmed; a bad token gets `{"type":"disconnect","reason":"unauthorized","reconnect":false}` then close; pings carry a unix timestamp every 3 s. | The Rust `/cable` checks no origin and accepts **both** spellings (`crates/tinkerex-sync/src/http/cable.rs`, `tests/cable.rs` drives it with the client's exact frames). Cutover therefore enables the nudge for the first time; §7.3 says so. |
 | `../tinkerex-client`'s server-backed suites enrol via `POST /v1/test/users` + `POST /v1/devices/login` — **maker-app routes the standalone host has never served**, so those suites cannot currently run against this server despite that repo's CLAUDE.md saying they do. | A cross-repo task gives those suites an enrolment path the sync server actually has (§8). Not a cutover blocker: the deployed client authenticates with an already-issued token. |
 | `../tinkerex/bin/restore-db sync` verifies a restore by `docker exec … bin/rails runner`; `bin/sync-server` boots `host/` with `bin/rails`; both parse `device_token:` out of `sync:device:issue`'s output. | The binary ships `stats` and `device issue` subcommands with **identical output lines**, and the two maker scripts switch to it in one PR (§8). |
 | `next_seq!` (the `FOR UPDATE` row lock taken **first** in every mutating transaction), refcounts only through `Gc.touch_refcounts!`, compare-and-swap in `sweep_orphans!`, claim-then-decrement in `prune_version!`, `share_links` protecting versions from retention — CLAUDE.md §4b, each a recorded data-loss bug. | Each becomes a **structural** property in Rust (a mutation API that cannot run a write before the lock; a refcount function that cannot skip `updated_at`) plus a test that fails when the structure is bypassed (§4 task 2.1, §5). |
@@ -139,7 +139,7 @@ JSON responses are `application/json`; every authenticated request stamps `devic
 Each task here is against the **Ruby** server (`host/`, `STORAGE_BACKEND=local`, port 3003, the
 CI job's own boot recipe) and produces either a recorded scenario or a written decision.
 
-- [ ] **0.1 Extend the corpus to the branches the Ruby suite pins and the corpus does not.** Author
+- [x] **0.1 Extend the corpus to the branches the Ruby suite pins and the corpus does not.** Author
   the requests by hand, record with `bin/conformance-record`, review every `$type` per the
   README. One new file per theme, continuing the numbering:
   - `12-edge-cases.yml`: `POST /v1/nodes` missing `node_id` (400); `POST /v1/commit` with a
@@ -165,12 +165,20 @@ CI job's own boot recipe) and produces either a recorded scenario or a written d
     carry that body) — it becomes a Rust unit test instead.
   Update `test/conformance_test.rb`'s coverage expectations if a route count changes (it derives
   the list from the drawer, so it should not). Verified output must be `N runs, 0 skips` in CI.
-- [ ] **0.2 Probe the cable identifier.** With the Ruby host running, open a WebSocket to
+  **Done 2026-09-30:** five files recorded against the Ruby host, reviewed per the README (client-chosen
+  ids tightened to literals, every `seq` loosened, presigned URLs to `$type`), then verified from a fresh
+  database and user on BOTH servers: `18 runs, 284 assertions, 0 failures, 0 skips` each. Findings: a
+  mkdir under a FILE parent is accepted (pinned, not judged); a numeric `expires_at` was stored as a raw
+  integer and 500'd every redeem (fixed in the Ruby controller first, then recorded); a malformed blob
+  hash answers Rails' own dev error page (only the status is pinned); the blob PUT never verifies content.
+- [x] **0.2 Probe the cable identifier.** With the Ruby host running, open a WebSocket to
   `/cable?token=…` and send `{"command":"subscribe","identifier":"{\"channel\":\"LibraryChannel\"}"}`,
   then commit a file. Record whether a `confirm_subscription` and a `{head_seq}` frame arrive, or
   a `reject_subscription`. Write the answer into task 3.1's test as the expected *current* behaviour
   and file a client issue in `tinkerex-client` if the subscription is rejected today.
-- [ ] **0.3 The SQL-layer spike, on a copy of a real database.** Take `bin/backup-db sync` from
+  **Done 2026-09-30:** see §0's cable row. The connection itself is rejected (no Origin), so the daemon has
+  polled all along; the client issue is §8.2's to file alongside the enrolment change.
+- [x] **0.3 The SQL-layer spike, on a copy of a real database.** Take `bin/backup-db sync` from
   the maker repo (or a `test/dummy` database after the corpus has run) and, in a throwaway crate,
   prove on **both** sqlx drivers: `$1` placeholders; reading Rails' datetime text into
   `chrono::NaiveDateTime` and writing it back **byte-identical**; booleans; `BLOB`
@@ -199,11 +207,11 @@ that file against the Rust binary with `0 skips`, run from the repo root with
 
 ### Phase 1 — Skeleton, auth, the read side (through `01-enrolment.yml`)
 
-- [ ] **1.1 Crate scaffold.** `Cargo.toml` workspace at the root; `crates/tinkerex-sync` (lib +
+- [ ] **1.1 Crate scaffold.** *(done except `deny.toml`; `rustfmt.toml` is the default)* `Cargo.toml` workspace at the root; `crates/tinkerex-sync` (lib +
   bin); `rustfmt.toml`, `clippy` at `-D warnings`, `deny.toml` allowing MIT/Apache-2.0/BSD/ISC/
   Zlib/Unicode only (mutation-check: add a GPL crate to a scratch branch and watch `cargo deny`
   go red). `tracing` JSON to stdout (the accessory logs to stdout).
-- [ ] **1.2 Config.** One `Config` from the **same env names** the Ruby host reads:
+- [x] **1.2 Config.** One `Config` from the **same env names** the Ruby host reads:
   `STORAGE_BACKEND` (`local`|`s3`, no default in production — refuse to boot without it, matching
   `host/config/environments/production.rb`), `CHUNK_LOCAL_DIR`, `CHUNK_PUBLIC_URL`,
   `CHUNK_BUCKET`/`CHUNK_ENDPOINT`/`CHUNK_REGION`/`CHUNK_ACCESS_KEY_ID`/`CHUNK_SECRET_ACCESS_KEY`,
@@ -211,7 +219,7 @@ that file against the Rust binary with `0 skips`, run from the repo root with
   `SYNC_VERIFY_FINALIZE` (default on), `RETENTION_POLICY` (`keep_all`|`tiered`), `DATABASE_URL`
   (Postgres) or `SQLITE_DATABASE` (default `storage/production.sqlite3`), `PORT`/bind,
   `RAILS_LOG_LEVEL`→ log level. `CABLE_ADAPTER` is read and ignored (one process, in-memory hub).
-- [ ] **1.3 Database layer** per the 0.3 spike: `Db` enum over `SqlitePool`/`PgPool`; a `Dialect`
+- [x] **1.3 Database layer** per the 0.3 spike: `Db` enum over `SqlitePool`/`PgPool`; a `Dialect`
   with placeholder, lock-clause and time-encoding methods; `Tx` wrapper; a `DbTime` newtype.
   `migrate` subcommand: fresh file → create the Rails-shaped schema (translated from
   `host/db/schema.rb`, indexes and FKs included) **and** insert the two `schema_migrations` rows +
@@ -219,58 +227,58 @@ that file against the Rust binary with `0 skips`, run from the repo root with
   exist and record a `_sqlx_migrations` baseline; later Rust migrations apply after it. `serve`
   runs `migrate` first only when told (`--migrate`, which the Docker entrypoint passes; `stats`
   and `device` never migrate), matching `host/bin/docker-entrypoint`'s guard.
-- [ ] **1.4 Auth + host routes.** Bearer extraction exactly as `Sync::V1::Authentication`;
+- [x] **1.4 Auth + host routes.** Bearer extraction exactly as `Sync::V1::Authentication`;
   `Device` lookup by SHA-256 hex; `last_seen_at` stamp; `GET /up` with the real count;
   `GET /v1/devices/whoami`; `POST /v1/devices`; `device issue --email --name` and `device list`
   subcommands printing the **same lines** `host/lib/tasks/devices.rake` prints (`user_id:`,
   `device_id:`, `device_token:` — the maker CI parses them). Token minting: 32 random bytes,
   base64url unpadded.
-- [ ] **1.5 Error envelope.** One `ApiError` → `{ "error": … }` with the five shapes of
+- [x] **1.5 Error envelope.** One `ApiError` → `{ "error": … }` with the five shapes of
   `Sync::V1::BaseController` (404 always `not_found`; 400/422/409 carry the message); a JSON body
   that fails to parse → 400 (Rails' behaviour); unknown body keys ignored.
-- [ ] **1.6 The read services**, each a bounded number of queries: `tree`, `changes`, `search`,
+- [x] **1.6 The read services** *(the statement-count guard is not yet written)*, each a bounded number of queries: `tree`, `changes`, `search`,
   `versions`, `conflicts` (list), `locks` (list), `trash` (list), with the batched
   `load_manifests`/`load_version_sizes` helpers. Guard: a test that counts sqlx statements via a
   `tracing` layer and asserts the count is **constant in N** (mutation-check by replacing one
   batch load with a per-row query and watching it fail).
-- [ ] **Gate:** `01-enrolment.yml` green; `cargo test` green on SQLite; `deny`/`clippy`/`fmt`
+- [x] **Gate:** `01-enrolment.yml` green; `cargo test` green on SQLite; `deny`/`clippy`/`fmt`
   green.
 
 ### Phase 2 — The write side, in corpus order (`02` through `11`)
 
-- [ ] **2.1 The mutation primitive.** `Mutation::run(user_id, |tx, seq| …)`: opens the
+- [x] **2.1 The mutation primitive.** `Mutation::run(user_id, |tx, seq| …)`: opens the
   transaction, takes the user row lock and allocates `seq` **before** handing control to the
   closure, stamps `updated_seq`/`updated_at`, appends exactly one changelog row. The closure
   cannot write before the lock because it never sees the transaction without the seq. Port the
   concurrent-seq property (`test/services/sync/concurrent_seq_test.rb`): 16 tasks × 25
   allocations on separate connections → exactly `1..400`, gapless; then the same through real
   begin+finalize. Runs on SQLite always, on Postgres when `TEST_DATABASE_URL` is set.
-- [ ] **2.2 Chunk store trait + `local` store** (`presign_put`/`presign_get`/`exists`/`put`/
+- [x] **2.2 Chunk store trait + `local` store** *(tamper/expiry/never-uploaded are pinned by `16-blob-tier.yml`; the 413 oversize case is still untested)* (`presign_put`/`presign_get`/`exists`/`put`/
   `last_modified`/`list`/`delete`; key `chunks/<user>/<hash>`; HMAC scheme byte-identical to
   `Sync::Storage::LocalChunkStore`; public base = `CHUNK_PUBLIC_URL` else the request's
   scheme+host — honour `X-Forwarded-Proto`/`Host` behind kamal-proxy). Blob endpoints with the
   64 MiB body limit, atomic writes, constant-time signature compare. Unit tests: tamper, expiry,
   oversize (413 text), non-local backend (404), non-UTF-8 round trip.
-- [ ] **2.3 `commit` begin/finalize** per §2, including the verify HEAD, `ChunksMissing`, kind
+- [x] **2.3 `commit` begin/finalize** per §2, including the verify HEAD, `ChunksMissing`, kind
   conflict, the conflict rule and its same-device exception, N-way conflict rows keyed by
   incoming version, the manifest/chunk upserts, and the one `touch_refcounts` function that
   always moves `updated_at`. → `02-commit.yml`.
-- [ ] **2.4 mkdir / symlink / move / delete(cascade)**, cycle and kind guards, `changes` for real.
+- [x] **2.4 mkdir / symlink / move / delete(cascade)**, cycle and kind guards, `changes` for real.
   → `03-changes.yml`, `04-nodes.yml`.
-- [ ] **2.5 trash list/restore** with the caller-supplied `to_root`. → `05-trash.yml`.
-- [ ] **2.6 tree + search** against a mutated tree. → `06-tree-search.yml`.
-- [ ] **2.7 conflicts keep/split, restore-to-version.** → `07-conflicts.yml`.
-- [ ] **2.8 locks.** → `08-locks.yml`. Plus a unit test for expiry (advance a mocked clock).
-- [ ] **2.9 chunks/download.** → `09-chunks.yml`.
-- [ ] **2.10 share links + anonymous redeem.** → `10-share-links.yml`.
-- [ ] **2.11 admin provisioning.** → `11-admin.yml`, then the §3 files `12`–`16`.
-- [ ] **Gate:** the whole corpus, `N runs, 0 failures, 0 skips`, twice in a row from two fresh
-  users on one database (proves nothing leaks between runs), and once against a **copy of the
+- [x] **2.5 trash list/restore** with the caller-supplied `to_root`. → `05-trash.yml`.
+- [x] **2.6 tree + search** against a mutated tree. → `06-tree-search.yml`.
+- [x] **2.7 conflicts keep/split, restore-to-version.** → `07-conflicts.yml`.
+- [x] **2.8 locks.** *(the expiry unit test is still to write)* → `08-locks.yml`. Plus a unit test for expiry (advance a mocked clock).
+- [x] **2.9 chunks/download.** → `09-chunks.yml`.
+- [x] **2.10 share links + anonymous redeem.** → `10-share-links.yml`.
+- [x] **2.11 admin provisioning.** → `11-admin.yml`, then the §3 files `12`–`16`.
+- [ ] **Gate:** the whole corpus, `N runs, 0 failures, 0 skips` *(done once per server, 18/284)*, twice in a row from two fresh
+  users on one database *(needs a wipe between runs: `11-admin.yml` and `14-tenancy.yml` provision fixed emails)* (proves nothing leaks between runs), and once against a **copy of the
   production database** with a freshly issued user (proves the real schema and real rows).
 
 ### Phase 3 — Everything the corpus cannot see
 
-- [ ] **3.1 `/cable`.** axum WebSocket; `?token=` auth (reject → `{"type":"disconnect",
+- [x] **3.1 `/cable`.** axum WebSocket; `?token=` auth (reject → `{"type":"disconnect",
   "reason":"unauthorized","reconnect":false}` then close); `welcome`; `ping` every 3 s with the
   unix timestamp; `subscribe` for identifier `{"channel":"LibraryChannel"}` **and**
   `{"channel":"Sync::LibraryChannel"}` → `confirm_subscription`; per-user broadcast hub; one
@@ -281,24 +289,24 @@ that file against the Rust binary with `0 skips`, run from the repo root with
   GET 3600 s presigns, paginated list, idempotent delete. Test against a MinIO/SeaweedFS container
   where Docker exists; otherwise assert the **wire** — the signed URL's canonical request — not a
   round trip through the SDK (CLAUDE.md §5's `FakeS3` lesson).
-- [ ] **3.3 GC and retention.** `RetentionPolicy` (`keep_all`, `tiered` with the `<24h` tier
+- [x] **3.3 GC and retention.** `RetentionPolicy` (`keep_all`, `tiered` with the `<24h` tier
   keyed by `version_id`), `prune_version` claim-then-decrement, `sweep_orphans` compare-and-swap
   with the grace window on `updated_at`, `apply_retention` protecting open conflicts' sides and
   **live share links' versions**, `prune_changelog`. Port `gc_test.rb`'s cases, especially: the
   share-link line deleted → test red; the CAS removed → a concurrent re-reference loses its
   bytes → test red. `gc retention [--grace]` subcommand.
-- [ ] **3.4 The two reapers.** `gc reap-pending` (expired rows, committed ∪ live-pending guards,
+- [x] **3.4 The two reapers.** `gc reap-pending` (expired rows, committed ∪ live-pending guards,
   storage-age guard, rows destroyed on every path) and `gc reap-storage` (list-based, 24 h
   grace, **all** pending rows protect, no age filter). Port the divergence test that keeps the two
   guards deliberately different. Both take `--dry-run` and `--user`.
-- [ ] **3.5 Scheduler.** `serve --scheduler` runs reap-pending hourly, reap-storage weekly,
+- [x] **3.5 Scheduler.** *(wall-clock: reap-pending hourly at :30, retention 03:15 UTC, reap-storage Sundays 04:15 UTC)* `serve --scheduler` runs reap-pending hourly, reap-storage weekly,
   retention nightly, in-process, with a single-flight guard (and a Postgres advisory lock when the
   pool is Postgres). Off by default; see §7 for when it turns on.
-- [ ] **3.6 `doctor`.** The Postgres pooler probe from `lib/sync/postgres_pooler_check.rb`
+- [x] **3.6 `doctor`.** The Postgres pooler probe from `lib/sync/postgres_pooler_check.rb`
   (`pg_backend_pid` + advisory lock across two statements) as a subcommand and as an optional
   boot refusal (`SYNC_DB_POOLER_CHECK=refuse`), off by default — the same "deliberate switch"
   posture `docs/SYNC_SERVER.md` records.
-- [ ] **3.7 `stats`.** Prints the counts `../tinkerex/bin/backup-db` and `bin/restore-db` want
+- [x] **3.7 `stats`.** Prints the counts `../tinkerex/bin/backup-db` and `bin/restore-db` want
   (`users`, `devices`, `nodes`, `versions`, `chunks`, `manifest_chunks`, `changelog_entries`) in
   the `<label>  <count>` shape they parse.
 - [ ] **3.8 Operational shape.** Graceful shutdown on SIGTERM (finish in-flight commits); request
@@ -380,7 +388,9 @@ back from a `docker inspect`.
   **existing** maker user's token (`users.sync_device_token` there — proves token compatibility on
   real credentials); a maker-app write journey (mkdir, upload, rename, delete, restore) through
   the web UI; a desktop client push/pull; the cable nudge observed in the daemon's log
-  (`nudge:` lines absent, a pull triggered within a second of a commit).
+  (`nudge:` lines absent, a pull triggered within a second of a commit). **This is the first time the
+  deployed client's nudge works at all** (§0.2: the Ruby host refused its Origin-less connection), so
+  the before-state is polling latency, and the cutover PR must say so.
 - [ ] **7.4 Watch for one week** with the scheduler **off**. Then `gc reap-pending --dry-run` and
   `gc reap-storage --dry-run` against production, read the lists, and only then enable
   `--scheduler` (retention stays `keep_all`; it prunes nothing and sweeps nothing).
@@ -450,9 +460,9 @@ Only after §7.4's week and a rollback window the operator is comfortable with.
   the Postgres database's own collation; the Ruby server has the same property, so parity is
   per-database, not per-implementation. Run the corpus against the database engine the target
   deployment uses.
-- **The cable identifier (0.2).** If the Ruby host rejects `LibraryChannel` today, the deployed
-  desktop client has been polling all along and the Rust server *fixes* a latent bug by
-  accepting both — good, but it changes observable latency and must be said in the cutover PR.
+- **The cable identifier (0.2) — resolved.** The Ruby host rejects the client's CONNECTION (no Origin
+  header), not just the identifier, so the deployed desktop client has been polling all along; the
+  Rust server accepts both and thereby changes observable latency, which §7.3 now says.
 - **`expires_at` parsing.** Rails silently nulls an unparseable value (a link meant to expire
   never does). 0.1 records the current behaviour; changing it is a wire change to decide
   separately, after cutover, with a re-recorded scenario.

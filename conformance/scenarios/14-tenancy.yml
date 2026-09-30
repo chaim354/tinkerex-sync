@@ -1,0 +1,413 @@
+---
+name: 14-tenancy
+description: 'Tenant isolation, driven through the real doors. Device A (the bootstrap
+  credential) creates a directory, a file, a share link and a lock, and notes its
+  own head_seq; then POST /v1/admin/libraries provisions a SECOND user, tenant B,
+  with a fixed email this corpus owns (tenant-b@tinkerex-sync.test -- fixed for the
+  same reason 11-admin.yml''s is: no scenario can interpolate a per-run value into
+  a request body, so CI wipes the database instead). Everything B then asks about
+  A''s node ids is a plain 404, indistinguishable from an id that never existed: the
+  versions listing, delete, move, restore, lock, unlock, trash restore, resolve_conflict,
+  a share link for A''s version, and revoking A''s link. A''s chunk hash minted for
+  B answers an EMPTY urls map (a hash B does not own is omitted, never refused --
+  the same rule 09-chunks.yml pins within one tenant). B''s own tree is empty, B may
+  reuse A''s very node_id for its own directory (node ids are per user), and B''s
+  search sees only B''s node. Meanwhile A''s changelog since the head_seq noted earlier
+  is still empty and A''s lock still held -- nothing B did touched A''s library. The
+  one deliberate crossing: A''s share link redeems under B''s credential, because
+  a share link is a public URL and the Authorization header is not consulted at all.'
+steps:
+- name: as A, note the current head_seq
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$type": integer
+      head_seq:
+        "$type": integer
+      user_id:
+        "$type": integer
+- name: as A, mkdir TenancyDir at the root
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000e001
+      parent_node_id:
+      name: TenancyDir
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-00000000e001
+      seq:
+        "$type": integer
+- name: as A, begin tenancy.txt under it
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000e003
+      node_id: 00000000-0000-4000-8000-00000000e002
+      parent_node_id: 00000000-0000-4000-8000-00000000e001
+      name: tenancy.txt
+      base_version_id:
+      size: 13
+      manifest:
+      - hash: 7a7fe2d39071abf39374f65d9a20aad0d5faa0169f4191b816370a96ddc83f88
+        offset: 0
+        length: 13
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000e003
+      missing:
+      - 7a7fe2d39071abf39374f65d9a20aad0d5faa0169f4191b816370a96ddc83f88
+      put_urls:
+        7a7fe2d39071abf39374f65d9a20aad0d5faa0169f4191b816370a96ddc83f88:
+          "$capture": tenancy_put_url
+- name: as A, upload its bytes
+  request:
+    method: PUT
+    path: "{{tenancy_put_url}}"
+    body: tenancy bytes
+  expect:
+    status: 200
+- name: as A, finalize
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-00000000e003/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": tenancy_version_id
+- name: as A, share that version
+  request:
+    method: POST
+    path: "/v1/share_links"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000e002
+      version_id: "{{tenancy_version_id}}"
+  expect:
+    status: 201
+    body:
+      expires_at:
+      id:
+        "$capture": tenancy_link_id
+      token:
+        "$capture": tenancy_token
+      version_id:
+        "$ref": tenancy_version_id
+- name: as A, lock the file
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002/lock"
+  expect:
+    status: 200
+    body:
+      by_me: true
+      device_name: device
+      expires_at:
+        "$type": string
+      held: true
+      node_id: 00000000-0000-4000-8000-00000000e002
+- name: as A, note head_seq after those writes -- the baseline B must not move
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$type": integer
+      head_seq:
+        "$capture": a_head_seq
+      user_id:
+        "$type": integer
+- name: provision tenant B through the admin door
+  request:
+    method: POST
+    path: "/v1/admin/libraries"
+    headers:
+      Authorization: Bearer conformance-corpus-admin-token
+    body:
+      email: tenant-b@tinkerex-sync.test
+      name: tenant-b-device
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$type": integer
+      device_token:
+        "$capture": tenant_b_token
+      user_id:
+        "$type": integer
+- name: as B, whoami is a fresh library
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$type": integer
+      head_seq: 0
+      user_id:
+        "$type": integer
+- name: as B, the tree is empty
+  request:
+    method: GET
+    path: "/v1/tree"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 200
+    body:
+      head_seq: 0
+      next_after_id:
+      nodes: []
+- name: as B, A's file has no versions to list
+  request:
+    method: GET
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002/versions"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, deleting A's file
+  request:
+    method: DELETE
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, moving A's file
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002/move"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+    body:
+      new_name: stolen.txt
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, restoring A's file to A's version
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002/restore"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+    body:
+      version_id: "{{tenancy_version_id}}"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, locking A's file
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002/lock"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, unlocking A's file
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002/unlock"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, restoring A's file from the trash
+  request:
+    method: POST
+    path: "/v1/trash/00000000-0000-4000-8000-00000000e002/restore"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, resolving a conflict on A's file
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002/resolve_conflict"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+    body:
+      keep_version_id: "{{tenancy_version_id}}"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, a hydration URL for A's chunk hash is simply omitted
+  request:
+    method: POST
+    path: "/v1/chunks/download"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+    body:
+      hashes:
+      - 7a7fe2d39071abf39374f65d9a20aad0d5faa0169f4191b816370a96ddc83f88
+  expect:
+    status: 200
+    body:
+      urls: {}
+- name: as B, a share link for A's version
+  request:
+    method: POST
+    path: "/v1/share_links"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+    body:
+      node_id: 00000000-0000-4000-8000-00000000e002
+      version_id: "{{tenancy_version_id}}"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, revoking A's share link
+  request:
+    method: DELETE
+    path: "/v1/share_links/{{tenancy_link_id}}"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: as B, mkdir a directory of the same name at B's own root
+  request:
+    method: POST
+    path: "/v1/nodes"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+    body:
+      node_id: 00000000-0000-4000-8000-00000000e004
+      parent_node_id:
+      name: TenancyDir
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-00000000e004
+      seq:
+        "$type": integer
+- name: as B, mkdir reusing A's very node_id -- node ids are per user, so this is
+    B's own new node
+  request:
+    method: POST
+    path: "/v1/nodes"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+    body:
+      node_id: 00000000-0000-4000-8000-00000000e001
+      parent_node_id: 00000000-0000-4000-8000-00000000e004
+      name: Inner
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-00000000e001
+      seq:
+        "$type": integer
+- name: as B, search sees only B's nodes
+  request:
+    method: GET
+    path: "/v1/search"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+    query:
+      q: tenancy
+  expect:
+    status: 200
+    body:
+      results:
+      - kind: dir
+        name: TenancyDir
+        node_id: 00000000-0000-4000-8000-00000000e004
+        path: "/TenancyDir"
+        size:
+      - kind: dir
+        name: Inner
+        node_id: 00000000-0000-4000-8000-00000000e001
+        path: "/TenancyDir/Inner"
+        size:
+- name: as B, A's share link redeems anyway -- a share link is public and ignores
+    the credential
+  request:
+    method: GET
+    path: "/v1/share/{{tenancy_token}}"
+    headers:
+      Authorization: Bearer {{tenant_b_token}}
+  expect:
+    status: 200
+    body:
+      manifest:
+      - hash: 7a7fe2d39071abf39374f65d9a20aad0d5faa0169f4191b816370a96ddc83f88
+        length: 13
+        offset: 0
+      name: tenancy.txt
+      node_id: 00000000-0000-4000-8000-00000000e002
+      version_id:
+        "$ref": tenancy_version_id
+- name: as A, nothing B did reached A's changelog
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: "{{a_head_seq}}"
+      limit: 10
+  expect:
+    status: 200
+    body:
+      changes: []
+      head_seq:
+        "$ref": a_head_seq
+      oldest_seq:
+        "$type": integer
+- name: as A, the lock is still held
+  request:
+    method: GET
+    path: "/v1/locks"
+  expect:
+    status: 200
+    body:
+      locks:
+      - by_me: true
+        device_name: device
+        expires_at:
+          "$type": string
+        held: true
+        node_id: 00000000-0000-4000-8000-00000000e002
+- name: as A, release it
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000e002/unlock"
+  expect:
+    status: 200
+    body:
+      released: true
+- name: as A, revoke the link
+  request:
+    method: DELETE
+    path: "/v1/share_links/{{tenancy_link_id}}"
+  expect:
+    status: 204

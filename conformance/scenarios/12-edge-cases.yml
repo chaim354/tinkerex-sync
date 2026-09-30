@@ -1,0 +1,506 @@
+---
+name: 12-edge-cases
+description: >-
+  The refusals and corner cases the Ruby unit suites pin and files 01-11 do not: what each
+  endpoint answers to a malformed or half-formed request, recorded from the reference server so a
+  reimplementation cannot pick a different status or message without a test naming it. In order:
+  a mkdir with no node_id at all (the param-missing 400), three commit begins that must create
+  nothing (a malformed chunk hash, a manifest entry with no hash, a commit with no name), then a
+  real directory and file so the mutation edge cases have something to hit -- a mkdir reusing a
+  live FILE's node_id (409), a mkdir whose parent is a file (ACCEPTED: the parent's kind is not
+  checked, pinned here rather than judged), a symlink with an empty target (accepted) and one
+  whose target is not base64 (422), a move that omits new_parent_node_id (the parent is kept)
+  versus one that passes an explicit null (re-parented to the root), garbage since/limit on
+  /v1/changes (read as 0 and the default, so the page is whatever the user's changelog holds --
+  loosened by hand to shape-only because that content depends on which earlier files ran) and an
+  out-of-range limit/offset on /v1/search, a finalize repeated after it already succeeded, a begin
+  repeated for the same commit_id with a DIFFERENT manifest (the pending row is replaced, so the
+  refused finalize names the new hash), a delete repeated on an already-tombstoned node (a second
+  delete entry, not a 404), the versions listing of a directory, a commit that revives a
+  tombstoned node_id, two unauthenticated device-route calls (no header, garbage token), and a
+  lock on a node that does not exist. Every node this file creates carries an Edge prefix or a
+  c-series id so nothing here collides with an earlier file's names.
+steps:
+- name: a mkdir with no node_id is refused before anything is created
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      parent_node_id:
+      name: EdgeNoId
+  expect:
+    status: 400
+    body:
+      error: 'param is missing or the value is empty or invalid: node_id'
+- name: a commit whose manifest carries a malformed chunk hash is refused
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c0f1
+      node_id: 00000000-0000-4000-8000-00000000c0f0
+      parent_node_id:
+      name: bad-hash.txt
+      base_version_id:
+      size: 13
+      manifest:
+      - hash: nothello
+        offset: 0
+        length: 13
+  expect:
+    status: 422
+    body:
+      error: 'invalid chunk hash(es): "nothello"'
+- name: a manifest entry with no hash at all is refused
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c0f2
+      node_id: 00000000-0000-4000-8000-00000000c0f0
+      parent_node_id:
+      name: no-hash.txt
+      base_version_id:
+      size: 13
+      manifest:
+      - offset: 0
+        length: 13
+  expect:
+    status: 422
+    body:
+      error: 'invalid chunk hash(es): nil'
+- name: a commit with no name is refused by validation
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c0f3
+      node_id: 00000000-0000-4000-8000-00000000c0f0
+      parent_node_id:
+      base_version_id:
+      size: 13
+      manifest:
+      - hash: cd0aad1f71c0405bbb6bf8480e940911f5726d9e2e706f1fc8797da90f1a3aba
+        offset: 0
+        length: 13
+  expect:
+    status: 422
+    body:
+      error: 'Validation failed: Name can''t be blank'
+- name: mkdir EdgeDir at the root
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000c001
+      parent_node_id:
+      name: EdgeDir
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-00000000c001
+      seq:
+        "$type": integer
+- name: begin edge.txt under EdgeDir
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c003
+      node_id: 00000000-0000-4000-8000-00000000c002
+      parent_node_id: 00000000-0000-4000-8000-00000000c001
+      name: edge.txt
+      base_version_id:
+      size: 13
+      manifest:
+      - hash: cd0aad1f71c0405bbb6bf8480e940911f5726d9e2e706f1fc8797da90f1a3aba
+        offset: 0
+        length: 13
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c003
+      missing:
+      - cd0aad1f71c0405bbb6bf8480e940911f5726d9e2e706f1fc8797da90f1a3aba
+      put_urls:
+        cd0aad1f71c0405bbb6bf8480e940911f5726d9e2e706f1fc8797da90f1a3aba:
+          "$capture": edge_v1_put_url
+- name: upload edge.txt's bytes
+  request:
+    method: PUT
+    path: "{{edge_v1_put_url}}"
+    body: edge bytes v1
+  expect:
+    status: 200
+- name: finalize edge.txt
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-00000000c003/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$capture": edge_v1_version_id
+- name: a mkdir reusing a live FILE's node_id is refused
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000c002
+      parent_node_id:
+      name: EdgeDuplicateId
+  expect:
+    status: 409
+    body:
+      error: node 00000000-0000-4000-8000-00000000c002 already exists as a file, cannot
+        become a dir
+- name: a mkdir whose parent is a FILE is accepted -- the parent's kind is not checked
+  request:
+    method: POST
+    path: "/v1/nodes"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000c009
+      parent_node_id: 00000000-0000-4000-8000-00000000c002
+      name: UnderAFile
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-00000000c009
+      seq:
+        "$type": integer
+- name: a symlink with an empty target
+  request:
+    method: POST
+    path: "/v1/nodes/symlink"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000c004
+      parent_node_id: 00000000-0000-4000-8000-00000000c001
+      name: blank-link
+      symlink_target: ''
+  expect:
+    status: 201
+    body:
+      node_id: 00000000-0000-4000-8000-00000000c004
+      seq:
+        "$type": integer
+- name: a symlink whose target is not base64
+  request:
+    method: POST
+    path: "/v1/nodes/symlink"
+    body:
+      node_id: 00000000-0000-4000-8000-00000000c005
+      parent_node_id: 00000000-0000-4000-8000-00000000c001
+      name: bad-link
+      symlink_target: "!!!not base64!!!"
+  expect:
+    status: 422
+    body:
+      error: invalid base64
+- name: a move that OMITS new_parent_node_id keeps the parent (a rename in place)
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000c002/move"
+    body:
+      new_name: edge-renamed.txt
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: search finds it still under EdgeDir
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: edge-renamed
+  expect:
+    status: 200
+    body:
+      results:
+      - kind: file
+        name: edge-renamed.txt
+        node_id: 00000000-0000-4000-8000-00000000c002
+        path: "/EdgeDir/edge-renamed.txt"
+        size: 13
+      - kind: dir
+        name: UnderAFile
+        node_id: 00000000-0000-4000-8000-00000000c009
+        path: "/EdgeDir/edge-renamed.txt/UnderAFile"
+        size:
+- name: a move with an EXPLICIT null new_parent_node_id re-parents to the root
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000c002/move"
+    body:
+      new_parent_node_id:
+      new_name: edge-renamed.txt
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: search finds it at the root now
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: edge-renamed
+  expect:
+    status: 200
+    body:
+      results:
+      - kind: file
+        name: edge-renamed.txt
+        node_id: 00000000-0000-4000-8000-00000000c002
+        path: "/edge-renamed.txt"
+        size: 13
+      - kind: dir
+        name: UnderAFile
+        node_id: 00000000-0000-4000-8000-00000000c009
+        path: "/edge-renamed.txt/UnderAFile"
+        size:
+- name: changes with garbage since and limit
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: garbage
+      limit: abc
+  expect:
+    status: 200
+    body:
+      changes:
+        "$type": array
+      head_seq:
+        "$type": integer
+      oldest_seq:
+        "$type": integer
+- name: changes with a negative since and a zero limit
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: -5
+      limit: 0
+  expect:
+    status: 200
+    body:
+      changes:
+        "$type": array
+      head_seq:
+        "$type": integer
+      oldest_seq:
+        "$type": integer
+- name: search with an out-of-range limit and a negative offset is clamped, not refused
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: edge
+      limit: 999
+      offset: -3
+  expect:
+    status: 200
+    body:
+      results:
+      - kind: dir
+        name: EdgeDir
+        node_id: 00000000-0000-4000-8000-00000000c001
+        path: "/EdgeDir"
+        size:
+      - kind: symlink
+        name: blank-link
+        node_id: 00000000-0000-4000-8000-00000000c004
+        path: "/EdgeDir/blank-link"
+        size:
+      - kind: file
+        name: edge-renamed.txt
+        node_id: 00000000-0000-4000-8000-00000000c002
+        path: "/edge-renamed.txt"
+        size: 13
+      - kind: dir
+        name: UnderAFile
+        node_id: 00000000-0000-4000-8000-00000000c009
+        path: "/edge-renamed.txt/UnderAFile"
+        size:
+- name: finalizing an already-finalized commit answers 404 -- the pending row is gone
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-00000000c003/finalize"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: begin edge-upsert.txt with one manifest
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c006
+      node_id: 00000000-0000-4000-8000-00000000c007
+      parent_node_id:
+      name: edge-upsert.txt
+      base_version_id:
+      size: 13
+      manifest:
+      - hash: dcf0b20a82b68e80d9d8c868f08610cd0d1be8bed3f25c3292f4897d11cf7831
+        offset: 0
+        length: 13
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c006
+      missing:
+      - dcf0b20a82b68e80d9d8c868f08610cd0d1be8bed3f25c3292f4897d11cf7831
+      put_urls:
+        dcf0b20a82b68e80d9d8c868f08610cd0d1be8bed3f25c3292f4897d11cf7831:
+          "$type": string
+- name: begin the SAME commit_id again with a DIFFERENT manifest -- the pending row
+    is replaced
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c006
+      node_id: 00000000-0000-4000-8000-00000000c007
+      parent_node_id:
+      name: edge-upsert.txt
+      base_version_id:
+      size: 18
+      manifest:
+      - hash: 7478244387da43bc2e6903e21654be9602fc31056953f7d507f250f1e1fe5112
+        offset: 0
+        length: 18
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c006
+      missing:
+      - 7478244387da43bc2e6903e21654be9602fc31056953f7d507f250f1e1fe5112
+      put_urls:
+        7478244387da43bc2e6903e21654be9602fc31056953f7d507f250f1e1fe5112:
+          "$type": string
+- name: finalizing it without an upload names the NEW manifest's hash as missing,
+    not the old one
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-00000000c006/finalize"
+  expect:
+    status: 422
+    body:
+      error: chunks_missing
+      missing:
+      - 7478244387da43bc2e6903e21654be9602fc31056953f7d507f250f1e1fe5112
+- name: delete edge-renamed.txt
+  request:
+    method: DELETE
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000c002"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: delete it AGAIN, already tombstoned
+  request:
+    method: DELETE
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000c002"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+- name: the versions listing of a DIRECTORY
+  request:
+    method: GET
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000c001/versions"
+  expect:
+    status: 200
+    body:
+      versions: []
+- name: begin a commit against the tombstoned node_id -- a commit revives it
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c008
+      node_id: 00000000-0000-4000-8000-00000000c002
+      parent_node_id:
+      name: edge-revived.txt
+      base_version_id:
+      size: 18
+      manifest:
+      - hash: 7478244387da43bc2e6903e21654be9602fc31056953f7d507f250f1e1fe5112
+        offset: 0
+        length: 18
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-00000000c008
+      missing:
+      - 7478244387da43bc2e6903e21654be9602fc31056953f7d507f250f1e1fe5112
+      put_urls:
+        7478244387da43bc2e6903e21654be9602fc31056953f7d507f250f1e1fe5112:
+          "$capture": edge_revive_put_url
+- name: upload the revived file's bytes
+  request:
+    method: PUT
+    path: "{{edge_revive_put_url}}"
+    body: edge revived bytes
+  expect:
+    status: 200
+- name: finalize the reviving commit
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-00000000c008/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: search finds the revived node live under its new name
+  request:
+    method: GET
+    path: "/v1/search"
+    query:
+      q: edge-revived
+  expect:
+    status: 200
+    body:
+      results:
+      - kind: file
+        name: edge-revived.txt
+        node_id: 00000000-0000-4000-8000-00000000c002
+        path: "/edge-revived.txt"
+        size: 18
+- name: a device route with NO Authorization header is 401
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: ''
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: a device route with a garbage token is 401
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: Bearer this-token-was-never-issued
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: locking a node that does not exist is 404
+  request:
+    method: POST
+    path: "/v1/nodes/00000000-0000-4000-8000-00000000c0ff/lock"
+  expect:
+    status: 404
+    body:
+      error: not_found

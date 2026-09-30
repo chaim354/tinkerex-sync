@@ -28,9 +28,12 @@ conformance/
   scenarios/
     01-enrolment.yml
     02-commit.yml
-    ...              eleven scenario files today, run in filename order (see "Execution semantics" below)
+    ...              sixteen scenario files today, run in filename order (see "Execution semantics" below)
     10-share-links.yml
     11-admin.yml
+    12-edge-cases.yml
+    ...              12-16 pin the refusals, the fast-forward edges, tenancy, share-link edges and the blob tier
+    16-blob-tier.yml
 
 bin/conformance-record    records a scenario's expected responses from a real, running server
 test/conformance_test.rb  the verifier -- replays every scenario against SYNC_SERVER_URL and checks it
@@ -373,7 +376,7 @@ verifier create a *fresh* binding table per scenario file (`bin/conformance-reco
 `Conformance::Matcher` inside the method that runs one file). A `$ref` can only resolve a name
 captured earlier in the *same* file — never in an earlier file. This is worth stating precisely
 because it would be easy to guess the opposite from "one continuous session": checking every
-`$capture`/`$ref` name across all eleven files today confirms every `$ref` is satisfied within its
+`$capture`/`$ref` name across all sixteen files today confirms every `$ref` is satisfied within its
 own file, with zero cross-file references (`11-admin.yml` uses neither at all — its one value
 worth asserting beyond a bare `$type`, the admin token, is a fixed literal both sides already
 agree on, never a value only a live response can supply). What actually carries state from an
@@ -436,7 +439,9 @@ SYNC_ADMIN_TOKEN=conformance-corpus-admin-token STORAGE_BACKEND=local bin/rails 
 `SYNC_ADMIN_TOKEN` above must be exactly `conformance-corpus-admin-token` — that literal is what
 `11-admin.yml` sends as its admin credential, checked in for the same reason its fixture email is
 (see that file's own `description`). It is a fixed test fixture, not a secret: it authenticates
-nothing but this disposable, localhost-only server.
+nothing but this disposable, localhost-only server. `14-tenancy.yml` provisions a second fixed
+email through the same door (`tenant-b@tinkerex-sync.test`), so a database that has run the corpus
+once answers 409 there the second time: wipe it between full runs, as the CI job does.
 
 Then, from the repository root:
 
@@ -445,13 +450,14 @@ SYNC_SERVER_URL=http://127.0.0.1:3003 SYNC_DEVICE_TOKEN=<token printed above> \
   bundle exec ruby -Itest test/conformance_test.rb
 ```
 
-Verified output, run against a freshly-issued device on a freshly-created database (2026-08-24):
+Verified output, run against a freshly-issued device on a freshly-created database (2026-09-30,
+sixteen files; the eleven-file corpus of 2026-08-24 reported `13 runs, 163 assertions`):
 
 ```
-13 runs, 163 assertions, 0 failures, 0 errors, 0 skips
+18 runs, 284 assertions, 0 failures, 0 errors, 0 skips
 ```
 
-(Eleven of those runs are one per scenario file; the other two are fixed, server-independent
+(Sixteen of those runs are one per scenario file; the other two are fixed, server-independent
 checks — "the corpus has at least one scenario file," and "every route `Sync.draw_v1_routes`
 defines is exercised by at least one scenario," described further under "What this corpus does not
 cover.")

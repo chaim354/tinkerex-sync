@@ -1,0 +1,189 @@
+---
+name: 16-blob-tier
+description: >-
+  The colocated blob tier (STORAGE_BACKEND=local), where this server signs and serves the chunk
+  bytes itself under /v1/chunks/blob/:user_id/:hash. 02 and 09 already pin the happy PUT and GET;
+  this file pins the refusals. The signature is an HMAC over user, hash and exp, so a forged sig
+  under a valid exp is refused, an exp in the past is refused whatever the sig, a request with no
+  query at all and one whose user id is not a number are refused (403 -- both simply fail the
+  signature check), and a malformed hash never reaches the signer (404; only the status is pinned,
+  because the reference server's body there is its own framework error page). A NEVER-uploaded
+  hash under a genuinely valid signature (the PUT URL a begin hands out is signed over the same
+  three inputs, so it is also a valid GET URL) answers 404, distinguishing "no such object" from
+  "not allowed". Finally the PUT URL is reused with the WRONG bytes for its hash, and the GET
+  afterwards records that the reference server does NOT verify content: the object is simply
+  overwritten. That is now pinned. The never-uploaded commit is finalized last to show it refuses
+  with exactly that hash missing.
+steps:
+- name: whoami, for the user id the blob path carries
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$type": integer
+      head_seq:
+        "$type": integer
+      user_id:
+        "$capture": blob_user_id
+- name: begin blob-tier.bin
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000010002
+      node_id: 00000000-0000-4000-8000-000000010001
+      parent_node_id:
+      name: blob-tier.bin
+      base_version_id:
+      size: 15
+      manifest:
+      - hash: 2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7
+        offset: 0
+        length: 15
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000010002
+      missing:
+      - 2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7
+      put_urls:
+        2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7:
+          "$capture": blob_put_url
+- name: upload the bytes the hash names
+  request:
+    method: PUT
+    path: "{{blob_put_url}}"
+    body: blob tier bytes
+  expect:
+    status: 200
+- name: finalize
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000010002/finalize"
+  expect:
+    status: 200
+    body:
+      seq:
+        "$type": integer
+      version_id:
+        "$type": string
+- name: a presigned GET for the chunk
+  request:
+    method: POST
+    path: "/v1/chunks/download"
+    body:
+      hashes:
+      - 2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7
+  expect:
+    status: 200
+    body:
+      urls:
+        2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7:
+          "$capture": blob_get_url
+- name: the bytes come back exactly
+  request:
+    method: GET
+    path: "{{blob_get_url}}"
+  expect:
+    status: 200
+    body: blob tier bytes
+- name: a forged signature under a valid expiry is refused
+  request:
+    method: GET
+    path: "/v1/chunks/blob/{{blob_user_id}}/2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7"
+    query:
+      exp: 4102444800
+      sig: '0000000000000000000000000000000000000000000000000000000000000000'
+  expect:
+    status: 403
+- name: an expiry in the past is refused whatever the signature
+  request:
+    method: GET
+    path: "/v1/chunks/blob/{{blob_user_id}}/2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7"
+    query:
+      exp: 1
+      sig: '0000000000000000000000000000000000000000000000000000000000000000'
+  expect:
+    status: 403
+- name: no query string at all
+  request:
+    method: GET
+    path: "/v1/chunks/blob/{{blob_user_id}}/2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7"
+  expect:
+    status: 403
+- name: a user id that is not a number
+  request:
+    method: GET
+    path: "/v1/chunks/blob/not-a-user/2fcd7471d392e6078b53f119ff7d9268a403ce2c7e3bf325056d12940593bbe7"
+    query:
+      exp: 4102444800
+      sig: '0000000000000000000000000000000000000000000000000000000000000000'
+  expect:
+    status: 403
+- name: a malformed hash in the path
+  request:
+    method: GET
+    path: "/v1/chunks/blob/{{blob_user_id}}/zz"
+    query:
+      exp: 4102444800
+      sig: '0000000000000000000000000000000000000000000000000000000000000000'
+  expect:
+    status: 404
+- name: begin a commit naming a hash that will never be uploaded -- its PUT URL is
+    a valid signature
+  request:
+    method: POST
+    path: "/v1/commit"
+    body:
+      commit_id: 00000000-0000-4000-8000-000000010003
+      node_id: 00000000-0000-4000-8000-000000010004
+      parent_node_id:
+      name: never.bin
+      base_version_id:
+      size: 14
+      manifest:
+      - hash: 6c12e0672dc85c33136cb2d0eb0b8f531503fb7a050575f42507f0529e215497
+        offset: 0
+        length: 14
+  expect:
+    status: 200
+    body:
+      commit_id: 00000000-0000-4000-8000-000000010003
+      missing:
+      - 6c12e0672dc85c33136cb2d0eb0b8f531503fb7a050575f42507f0529e215497
+      put_urls:
+        6c12e0672dc85c33136cb2d0eb0b8f531503fb7a050575f42507f0529e215497:
+          "$capture": never_put_url
+- name: a GET under that valid signature for an object that was never uploaded
+  request:
+    method: GET
+    path: "{{never_put_url}}"
+  expect:
+    status: 404
+- name: reuse blob-tier.bin's PUT URL with bytes that do NOT match its hash
+  request:
+    method: PUT
+    path: "{{blob_put_url}}"
+    body: not the bytes that hash names
+  expect:
+    status: 200
+- name: what the chunk reads as afterwards
+  request:
+    method: GET
+    path: "{{blob_get_url}}"
+  expect:
+    status: 200
+    body: not the bytes that hash names
+- name: finalizing the never-uploaded commit refuses with exactly that hash missing
+  request:
+    method: POST
+    path: "/v1/commit/00000000-0000-4000-8000-000000010003/finalize"
+  expect:
+    status: 422
+    body:
+      error: chunks_missing
+      missing:
+      - 6c12e0672dc85c33136cb2d0eb0b8f531503fb7a050575f42507f0529e215497

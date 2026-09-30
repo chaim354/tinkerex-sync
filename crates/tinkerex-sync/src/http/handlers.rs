@@ -414,11 +414,15 @@ pub async fn chunks_download(
     Ok(Json(json!({ "urls": urls })).into_response())
 }
 
+/// `None` (a 404) only for a hash the local store's own `[0-9a-f]{8,128}` rule refuses; the user
+/// id is read with Ruby's `to_i` (a non-number is 0), so a garbage user id simply fails the
+/// signature check and answers 403 -- what the reference server does (16-blob-tier.yml).
 fn blob_params(user_id: &str, hash: &str) -> Option<i64> {
-    if !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) || hash.is_empty() {
-        return None; // the Rails route constraint: no such route
+    let hex = hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    if !hex || !(8..=128).contains(&hash.len()) {
+        return None;
     }
-    user_id.parse::<i64>().ok()
+    Some(crate::services::params::str_to_i(user_id))
 }
 
 /// The local blob tier: HMAC in the query string, never a bearer token; 404 unless the active

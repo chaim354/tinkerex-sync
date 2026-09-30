@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# RUN THE CONFORMANCE CORPUS AGAINST THE RUST BINARY, the way ci.yml's conformance job runs it
+# against the Ruby host: a FRESH database and chunk directory, a freshly issued device (the corpus's
+# first assertion pins head_seq 0, and 11-admin.yml's fixed email must never have been used), the
+# admin token 11-admin.yml sends, and the Ruby verifier as the grader -- deliberately not a Rust
+# runner, because a grader written by the same hands as the server would share its assumptions.
+#
+#   bin/conformance-rust                  # builds if needed, boots on $SYNC_PORT (default 3004)
+#   TINKEREX_SYNC_BIN=target/release/tinkerex-sync bin/conformance-rust
+#
+# THE SUMMARY LINE IS PARSED, AND A SKIP FAILS THE RUN. Nothing inside test/conformance_test.rb can
+# vouch for its own skips (its header says so); with a server this script just booted, a skip is
+# never legitimate. Exit status is the verifier's own, or 1 for a skip or zero runs.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+PORT="${SYNC_PORT:-3004}"
+BIN="${TINKEREX_SYNC_BIN:-target/debug/tinkerex-sync}"
+
+if [ ! -x "$BIN" ]; then
+  cargo build --quiet
+fi
+
+if curl -sf "http://127.0.0.1:$PORT/up" >/dev/null 2>&1; then
+  echo "port $PORT already answers /up -- another server is running; stop it or set SYNC_PORT" >&2
+  exit 1
+fi
+
+WORK="$(mktemp -d)"
+SRV=""
+cleanup() {
+  [ -n "$SRV" ] && kill "$SRV" 2>/dev/null || true
+  rm -rf "${WORK:?}"
+}
+trap cleanup EXIT
+
+export STORAGE_BACKEND=local
+export CHUNK_LOCAL_DIR="$WORK/chunks"
+export SECRET_KEY_BASE="conformance-secret-key-base"
+export SYNC_ADMIN_TOKEN="conformance-corpus-admin-token"   # the literal 11-admin.yml sends
+export SQLITE_DATABASE="$WORK/sync.sqlite3"
+
+"$BIN" migrate >/dev/null
+EMAIL="conformance-$(date +%s)-$$@tinkerex-sync.test"
+TOKEN="$("$BIN" device issue --email "$EMAIL" | awk -F': *' '/^device_token:/ {print $2}')"
+if [ -z "$TOKEN" ]; then
+  echo "device issue printed no device_token" >&2
+  exit 1
+fi
+
+"$BIN" serve --bind 127.0.0.1 --port "$PORT" > "$WORK/server.log" 2>&1 &
+SRV=$!
+for _ in $(seq 1 100); do
+  curl -sf "http://127.0.0.1:$PORT/up" >/dev/null 2>&1 && break
+  sleep 0.1
+done
+if ! curl -sf "http://127.0.0.1:$PORT/up" >/dev/null 2>&1; then
+  echo "the server never answered 200 on /up" >&2
+  cat "$WORK/server.log" >&2
+  exit 1
+fi
+
+set +e
+SYNC_SERVER_URL="http://127.0.0.1:$PORT" SYNC_DEVICE_TOKEN="$TOKEN" RAILS_ENV=test \
+  bundle exec ruby -Itest test/conformance_test.rb 2>&1 | tee "$WORK/verifier.log"
+STATUS=${PIPESTATUS[0]}
+set -e
+
+SUMMARY="$(grep -E '^[0-9]+ runs, [0-9]+ assertions, [0-9]+ failures, [0-9]+ errors, [0-9]+ skips' "$WORK/verifier.log" || true)"
+if [ -z "$SUMMARY" ]; then
+  echo "no minitest summary line -- the verifier may not have run at all" >&2
+  exit 1
+fi
+RUNS="$(echo "$SUMMARY" | grep -oE '^[0-9]+')"
+SKIPS="$(echo "$SUMMARY" | grep -oE '[0-9]+ skips' | grep -oE '^[0-9]+')"
+if [ "$SKIPS" != "0" ]; then
+  echo "the verifier skipped $SKIPS test(s) with a server it was pointed at -- it proved nothing" >&2
+  exit 1
+fi
+if [ "$RUNS" = "0" ]; then
+  echo "the verifier ran 0 tests" >&2
+  exit 1
+fi
+exit "$STATUS"

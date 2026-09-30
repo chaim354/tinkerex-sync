@@ -38,9 +38,23 @@ export STORAGE_BACKEND=local
 export CHUNK_LOCAL_DIR="$WORK/chunks"
 export SECRET_KEY_BASE="conformance-secret-key-base"
 export SYNC_ADMIN_TOKEN="conformance-corpus-admin-token"   # the literal 11-admin.yml sends
-export SQLITE_DATABASE="$WORK/sync.sqlite3"
+# THE POSTGRES LEG (plan §6): CONFORMANCE_DATABASE_URL=postgres://... points the binary at an
+# EMPTY database instead of the temp SQLite file. Empty is required, not merely preferred --
+# 11-admin.yml and 14-tenancy.yml provision fixed emails, so a database that has run the corpus
+# once answers 409 the second time -- and `migrate` reporting "Adopted" (an existing schema)
+# therefore fails the run before a single request goes out.
+if [ -n "${CONFORMANCE_DATABASE_URL:-}" ]; then
+  export DATABASE_URL="$CONFORMANCE_DATABASE_URL"
+  unset SQLITE_DATABASE
+else
+  export SQLITE_DATABASE="$WORK/sync.sqlite3"
+fi
 
-"$BIN" migrate >/dev/null
+MIGRATED="$("$BIN" migrate)"
+if [ "$MIGRATED" != "Created" ]; then
+  echo "migrate reported '$MIGRATED' -- the corpus needs a database it can create from nothing" >&2
+  exit 1
+fi
 EMAIL="conformance-$(date +%s)-$$@tinkerex-sync.test"
 TOKEN="$("$BIN" device issue --email "$EMAIL" | awk -F': *' '/^device_token:/ {print $2}')"
 if [ -z "$TOKEN" ]; then
@@ -60,6 +74,9 @@ if ! curl -sf "http://127.0.0.1:$PORT/up" >/dev/null 2>&1; then
   exit 1
 fi
 
+# The verifier boots test/dummy, a Rails app that would read an exported DATABASE_URL and reach
+# for the `pg` adapter this bundle does not carry. The server already inherited it at spawn.
+unset DATABASE_URL
 set +e
 SYNC_SERVER_URL="http://127.0.0.1:$PORT" SYNC_DEVICE_TOKEN="$TOKEN" RAILS_ENV=test \
   bundle exec ruby -Itest test/conformance_test.rb 2>&1 | tee "$WORK/verifier.log"

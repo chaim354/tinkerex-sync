@@ -85,12 +85,22 @@ test went red, the guard was restored).
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo deny check licenses sources        # permissive licences only; deny.toml
-cargo test                               # SQLite; TEST_DATABASE_URL=postgres://… adds the Postgres leg
+cargo test                               # every TestServer on a temp SQLite file
 bin/conformance-rust                     # boots the binary on 3004 and runs the whole corpus
+
+# The legs CI does not run (no Postgres, no bucket on the runner); each PRINTS "NOT RUN" when its
+# variable is unset rather than passing silently, and each needs an EMPTY database or bucket:
+TEST_DATABASE_URL=postgres://…/fresh_db cargo test              # the whole suite on Postgres
+CONFORMANCE_DATABASE_URL=postgres://…/fresh_db bin/conformance-rust
+TEST_S3_ENDPOINT=http://127.0.0.1:8333 TEST_S3_BUCKET=b \
+  TEST_S3_ACCESS_KEY_ID=… TEST_S3_SECRET_ACCESS_KEY=… cargo test --test s3_roundtrip
 ```
 
-`bin/conformance-rust` last reported `18 runs, 284 assertions, 0 failures, 0 errors, 0 skips`
-(2026-09-30), the same figure the Ruby host reports on a fresh database.
+Measured 2026-09-30 on the development box: `bin/conformance-rust` reports
+`18 runs, 284 assertions, 0 failures, 0 errors, 0 skips` on SQLite and the same on Postgres 16 —
+the figure the Ruby host reports on a fresh database; the whole `cargo test` suite passes on
+Postgres; and `s3_roundtrip` passes against a SeaweedFS 4.48 binary (store verbs, presigned PUT
+and GET, a commit whose finalize verifies against the bucket).
 
 ## The image
 

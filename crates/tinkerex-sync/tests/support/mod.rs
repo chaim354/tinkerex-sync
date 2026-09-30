@@ -35,13 +35,51 @@ pub struct TestServer {
 }
 
 impl TestServer {
-    /// A fresh SQLite database.
+    /// A fresh SQLite database — or, with `TEST_DATABASE_URL` set, that Postgres database, which
+    /// must be EMPTY at the start of a run (fixed emails across the test files collide on a reused
+    /// one; a CI job creates it fresh, exactly as bin/conformance-rust demands). Every test in
+    /// every binary switches together, so one `cargo test` run is one leg.
     pub async fn start() -> Self {
-        Self::start_with(None).await
+        Self::start_with(
+            std::env::var("TEST_DATABASE_URL")
+                .ok()
+                .filter(|u| !u.is_empty()),
+        )
+        .await
     }
 
     /// `database`: `None` for a fresh temp SQLite file, or a `DATABASE_URL` (the Postgres leg).
     pub async fn start_with(database: Option<String>) -> Self {
+        Self::start_from(database, HashMap::new()).await
+    }
+
+    /// The s3 store instead of the local blob tier (tests/s3_roundtrip.rs, against a real
+    /// SeaweedFS/MinIO); the database is still a temp SQLite file unless `TEST_DATABASE_URL` says
+    /// otherwise.
+    pub async fn start_s3(
+        endpoint: &str,
+        bucket: &str,
+        access_key_id: &str,
+        secret_access_key: &str,
+    ) -> Self {
+        let storage = HashMap::from([
+            ("STORAGE_BACKEND", "s3".to_string()),
+            ("CHUNK_ENDPOINT", endpoint.to_string()),
+            ("CHUNK_BUCKET", bucket.to_string()),
+            ("CHUNK_REGION", "us-east-1".to_string()),
+            ("CHUNK_ACCESS_KEY_ID", access_key_id.to_string()),
+            ("CHUNK_SECRET_ACCESS_KEY", secret_access_key.to_string()),
+        ]);
+        Self::start_from(
+            std::env::var("TEST_DATABASE_URL")
+                .ok()
+                .filter(|u| !u.is_empty()),
+            storage,
+        )
+        .await
+    }
+
+    async fn start_from(database: Option<String>, storage: HashMap<&'static str, String>) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("test.sqlite3");
         let chunk_dir = dir.path().join("chunks");
@@ -51,6 +89,7 @@ impl TestServer {
             ("SECRET_KEY_BASE", SECRET.to_string()),
             ("SYNC_ADMIN_TOKEN", ADMIN_TOKEN.to_string()),
         ]);
+        env.extend(storage);
         match &database {
             Some(url) => {
                 env.insert("DATABASE_URL", url.clone());
@@ -65,7 +104,13 @@ impl TestServer {
             "the database the harness resolved is not the one asked for"
         );
         let db = Db::connect(&config.database).await.expect("connect");
-        schema::migrate(&db, "test").await.expect("migrate");
+        {
+            // Tests in one binary run on parallel threads; two first-ever `migrate`s against the
+            // same Postgres database would race on CREATE TABLE. Serialize; the second adopts.
+            static MIGRATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _one_at_a_time = MIGRATE.lock().await;
+            schema::migrate(&db, "test").await.expect("migrate");
+        }
         let store =
             ChunkStore::from_config(&config.storage, &config.secret_key_base).expect("store");
         let state: State = Arc::new(AppState {

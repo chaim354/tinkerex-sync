@@ -294,9 +294,13 @@ that file against the Rust binary with `0 skips`, run from the repo root with
   where Docker exists; otherwise assert the **wire** — the signed URL's canonical request — not a
   round trip through the SDK (CLAUDE.md §5's `FakeS3` lesson).
   **2026-09-30:** `src/store/s3.rs`; the wire tests pin path-style host + key, the SigV4 query
-  parameters, determinism, and that the secret and the user are in the signature. No Docker on the
-  development box, so the bucket round trip is a **manual gate** (a SeaweedFS/MinIO run, recorded
-  in the cutover PR) — not covered by CI, and the README says so.
+  parameters, determinism, and that the secret and the user are in the signature. The bucket round
+  trip turned out not to need Docker: `tests/s3_roundtrip.rs` runs against any S3 endpoint named by
+  `TEST_S3_ENDPOINT` (+ bucket and keys) and prints `NOT RUN` otherwise, and it passed against a
+  SeaweedFS 4.48 binary on the development box — the store's verbs, a presigned PUT and GET (an
+  expired presign refused with 403 by the bucket), and a whole commit through the HTTP server
+  whose finalize HEADs the bucket, refuses before the upload, and accepts after it. Still not in CI
+  (no bucket on the runner); the README names the knobs.
 - [x] **3.3 GC and retention.** `RetentionPolicy` (`keep_all`, `tiered` with the `<24h` tier
   keyed by `version_id`), `prune_version` claim-then-decrement, `sweep_orphans` compare-and-swap
   with the grace window on `updated_at`, `apply_retention` protecting open conflicts' sides and
@@ -378,14 +382,25 @@ Each line is CLAUDE.md §4's rule with its Rust form and its mutation check.
 Not on the cutover path (production is SQLite) but on the managed-product path and part of the
 engine's contract. In scope for this plan:
 
-- [ ] `TEST_DATABASE_URL` runs the whole `cargo test` suite on Postgres 16, including the
+- [x] `TEST_DATABASE_URL` runs the whole `cargo test` suite on Postgres 16, including the
   concurrent-seq property with 32×50 and the corpus (`conformance-rust-postgres` job) — on the
   Linux runner if 0.4 registers one, else a documented manual gate that Phase 6 must show green
   in its PR body.
-- [ ] The `FOR UPDATE`-first ordering is the one place SQLite cannot catch a regression (single
+  **Measured 2026-09-30 on Postgres 16.13 (the development box, not a runner):** `TEST_DATABASE_URL`
+  switches every integration test's `TestServer` to Postgres (a fresh database per run — the test
+  files use fixed emails) and the whole suite passed there: 44 unit, cable 5, concurrency 3 (the
+  16×25 allocations and 8×10 commits gapless on `FOR UPDATE`), gc 36, limits 4, query_budget 1,
+  routes 1. `CONFORMANCE_DATABASE_URL` points `bin/conformance-rust` at an empty Postgres database
+  (it refuses one `migrate` merely adopts) and the sixteen-file corpus passed there too:
+  `18 runs, 284 assertions, 0 failures, 0 skips`. Still a manual gate in CI until a Linux runner
+  exists — the `rust-check` job's comment says so, and the leg prints `NOT RUN` rather than passing
+  when the variable is unset.
+- [x] The `FOR UPDATE`-first ordering is the one place SQLite cannot catch a regression (single
   writer); the Postgres property test is the proof, so it is required before any Postgres
-  deployment ever happens.
-- [ ] `doctor` + the optional boot refusal cover statement-mode poolers.
+  deployment ever happens. *(the same measured run; `BEGIN IMMEDIATE`'s removal was the SQLite-side
+  mutation check, red)*
+- [x] `doctor` + the optional boot refusal cover statement-mode poolers. *(3.6; the probe itself is
+  exercised only by hand against a real pooler — none here)*
 
 ---
 
@@ -422,7 +437,7 @@ Record the arc in the Kaneo record via the maker repo's `bin/log`, as every arc 
 
 ## 8. Cross-repo work (each its own PR in its own repo)
 
-- [x] **8.1 `tinkerex`: `bin/sync-server`** *(branch `claude/rust-sync-server` there, 2026-09-30: the Rust arm keeps its own database and chunk dir under `tmp/`, writes the same env file; driven for real — prepare, start, whoami, admin door 201; the script test gained a stubbed Rust-arm happy path, mutation-checked; `bin/ci test-chunk-remote`'s run-count parity is still to be measured on the Mac runner)* gains `SYNC_IMPL=rust|ruby` (default `ruby` until
+- [x] **8.1 `tinkerex`: `bin/sync-server`** *(branch `claude/rust-sync-server` there, 2026-09-30: the Rust arm keeps its own database and chunk dir under `tmp/`, writes the same env file; driven for real — prepare, start, whoami, admin door 201; the script test gained a stubbed Rust-arm happy path, mutation-checked; `bin/ci test-chunk-remote` measured on the development box against the Rust binary: the journey file `10 runs, 126 assertions, 0 skips`, then the full suite `4263 runs, 20336 assertions, 14 failures, 2 errors, 32 skips` against `bin/ci test`'s `4263 runs, 20178 assertions, 14 failures, 2 errors, 56 skips` — identical run counts, the same sixteen failures on both legs and all of them this box's (root can read "unreadable" directories, no preview renderers), 24 fewer skips because the chunk_remote-gated tests ran)* gains `SYNC_IMPL=rust|ruby` (default `ruby` until
   cutover, then `rust`, then the switch is removed with the Ruby): `prepare` = `cargo build
   --release --manifest-path ../tinkerex-sync/Cargo.toml` (or `TINKEREX_SYNC_BIN`), `migrate`,
   `device issue`; `start` = `serve --bind 127.0.0.1 --port $SYNC_PORT` with

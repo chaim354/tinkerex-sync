@@ -31,6 +31,14 @@ Project context for an AI coding agent (Claude Code) and human developers.
    **`host/` is a real Rails app that mounts it** and supplies the host obligations §4c lists —
    `User`, `Node`, `Device`, `ApplicationRecord`, `ApplicationJob`, `ApplicationCable`. `test/dummy`
    is a *third* thing: a minimal host that exists to prove the engine boots without any of this.
+4. **The Rust rewrite exists, beside the Ruby, under `crates/tinkerex-sync`** (since 2026-09-30;
+   plan and status: `docs/superpowers/plans/2026-09-30-rust-rewrite.md`). One binary serves the
+   same wire from the same image paths and env; the corpus grades it (`bin/conformance-rust`:
+   `18 runs, 284 assertions, 0 failures, 0 skips`, the Ruby host's own figure); its README lists
+   the cargo gates and the two legs CI cannot run. **Until Phase 6 of that plan, a change to
+   endpoint behaviour moves three things: the Ruby, the Rust, and the corpus.** The Ruby host is
+   still what production runs; `Dockerfile.rust` and `SYNC_IMPL=rust bin/build-and-push` are the
+   cutover's image, written but not yet built or deployed.
 
 ---
 

@@ -11,6 +11,7 @@ pub mod error;
 pub mod http;
 pub mod ids;
 pub mod models;
+pub mod scheduler;
 pub mod schema;
 pub mod services;
 pub mod store;

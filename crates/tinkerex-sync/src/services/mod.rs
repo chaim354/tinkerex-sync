@@ -4,13 +4,17 @@
 pub mod changes;
 pub mod commit;
 pub mod conflicts;
+pub mod doctor;
+pub mod gc;
 pub mod locks;
 pub mod mutation;
 pub mod nodes;
 pub mod nudge;
 pub mod params;
 pub mod provisioning;
+pub mod reapers;
 pub mod restore;
+pub mod retention;
 pub mod search;
 pub mod sharing;
 pub mod subtree_delete;

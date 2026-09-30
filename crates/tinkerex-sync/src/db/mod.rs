@@ -418,18 +418,6 @@ impl Tx {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn placeholder_lists() {
-        assert_eq!(placeholders(1, 3), "$1, $2, $3");
-        assert_eq!(placeholders(4, 1), "$4");
-        assert_eq!(placeholders(1, 0), "");
-    }
-}
-
 /// What a service needs from wherever it runs — the pool for reads, a transaction for writes —
 /// so each query helper is written once. `Db` is a cheap-to-clone handle, so a caller that only
 /// holds a shared reference clones it to satisfy `&mut self`.
@@ -475,5 +463,17 @@ impl Exec for Tx {
     }
     async fn fetch_one(&mut self, q: &Query) -> sqlx::Result<Row> {
         Tx::fetch_one(self, q).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_lists() {
+        assert_eq!(placeholders(1, 3), "$1, $2, $3");
+        assert_eq!(placeholders(4, 1), "$4");
+        assert_eq!(placeholders(1, 0), "");
     }
 }

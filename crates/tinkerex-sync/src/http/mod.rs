@@ -1,5 +1,6 @@
 //! The v1 wire: axum router, the request extractors, and the state every handler shares.
 
+pub mod cable;
 pub mod handlers;
 
 use std::sync::Arc;
@@ -68,6 +69,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/chunks/blob/:user_id/:hash"),
     ("GET", "/v1/chunks/blob/:user_id/:hash"),
     ("POST", "/v1/admin/libraries"),
+    ("GET", "/cable"),
 ];
 
 pub fn router(state: State) -> Router {
@@ -112,6 +114,7 @@ pub fn router(state: State) -> Router {
                 .get(blob_download),
         )
         .route("/v1/admin/libraries", post(admin_libraries_create))
+        .route("/cable", get(cable::cable))
         .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

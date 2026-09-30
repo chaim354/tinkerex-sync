@@ -401,16 +401,13 @@ pub async fn chunks_download(
     let owned = known_chunk_hashes(&mut db, id.user.id, &hashes).await?;
     let base = base_url(&headers);
     let now = Timestamp::now();
-    let urls: BTreeMap<String, String> = hashes
-        .iter()
-        .filter(|h| owned.contains(*h))
-        .map(|h| {
-            (
-                h.clone(),
-                state.store.presign_get(&base, id.user.id, h, now),
-            )
-        })
-        .collect();
+    let mut urls: BTreeMap<String, String> = BTreeMap::new();
+    for h in hashes.iter().filter(|h| owned.contains(*h)) {
+        urls.insert(
+            h.clone(),
+            state.store.presign_get(&base, id.user.id, h, now).await?,
+        );
+    }
     Ok(Json(json!({ "urls": urls })).into_response())
 }
 
@@ -549,7 +546,7 @@ pub async fn share_download(
         .ok_or(ApiError::NotFound)?;
     Ok(
         Json(
-            json!({ "urls": sharing::presign_urls(&state.store, &base_url(&headers), &cap, now) }),
+            json!({ "urls": sharing::presign_urls(&state.store, &base_url(&headers), &cap, now).await? }),
         )
         .into_response(),
     )

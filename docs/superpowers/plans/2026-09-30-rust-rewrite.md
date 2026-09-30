@@ -187,11 +187,15 @@ CI job's own boot recipe) and produces either a recorded scenario or a written d
   Read `PRAGMA journal_mode`, `synchronous`, `foreign_keys` off the real file and record what the
   Rust connection must set. The spike's findings become `crates/tinkerex-sync/src/db/README.md`.
   If any of this fails on sqlx, the fallback is diesel's `MultiConnection` — decide here, once.
-- [ ] **0.4 Runners.** `charless-MBP-maker-mac` already has rustup (it builds `tinkerex-client`);
+- [x] **0.4 Runners.** `charless-MBP-maker-mac` already has rustup (it builds `tinkerex-client`);
   update `ci/runners/setup-macos.sh`'s "does not install Rust" note. Decide whether to register a
   Linux runner (the maker repo's `ops/ci-runner-stack.yml` containers) against this repo for the
   Postgres leg; if not, the Postgres leg is a documented manual gate until Phase 6 (§6).
-- [ ] **0.5 Write down the storage conventions** (D2) as a checklist in the crate README:
+  **Decided 2026-09-30:** no Linux runner for now; the note is updated and the script refuses to
+  register a box without `cargo`. The Postgres leg (`tests/concurrency.rs`, `TEST_DATABASE_URL`)
+  prints that it did not run when unset, and `ci.yml`'s `rust-check` job says so in its comment.
+- [x] **0.5 Write down the storage conventions** (D2) as a checklist in the crate README
+  (`crates/tinkerex-sync/README.md`, with the measurements in `src/db/README.md`):
   timestamp format per dialect, JSON time format (`%Y-%m-%dT%H:%M:%S%.3fZ`), mode defaults
   (493/420/511), `updated_at` maintained on every node write, `versions` has no `updated_at`,
   `schema_migrations` versions `20260101000001`/`20260101000002`, `ar_internal_metadata`
@@ -207,7 +211,7 @@ that file against the Rust binary with `0 skips`, run from the repo root with
 
 ### Phase 1 — Skeleton, auth, the read side (through `01-enrolment.yml`)
 
-- [ ] **1.1 Crate scaffold.** *(done except `deny.toml`; `rustfmt.toml` is the default)* `Cargo.toml` workspace at the root; `crates/tinkerex-sync` (lib +
+- [x] **1.1 Crate scaffold.** *(`deny.toml` landed 2026-09-30 and was mutation-checked with a GPL path crate: red; `rustfmt.toml` is the default)* `Cargo.toml` workspace at the root; `crates/tinkerex-sync` (lib +
   bin); `rustfmt.toml`, `clippy` at `-D warnings`, `deny.toml` allowing MIT/Apache-2.0/BSD/ISC/
   Zlib/Unicode only (mutation-check: add a GPL crate to a scratch branch and watch `cargo deny`
   go red). `tracing` JSON to stdout (the accessory logs to stdout).
@@ -236,7 +240,7 @@ that file against the Rust binary with `0 skips`, run from the repo root with
 - [x] **1.5 Error envelope.** One `ApiError` → `{ "error": … }` with the five shapes of
   `Sync::V1::BaseController` (404 always `not_found`; 400/422/409 carry the message); a JSON body
   that fails to parse → 400 (Rails' behaviour); unknown body keys ignored.
-- [x] **1.6 The read services** *(the statement-count guard is not yet written)*, each a bounded number of queries: `tree`, `changes`, `search`,
+- [x] **1.6 The read services** *(guard: `tests/query_budget.rs`, mutation-checked with a per-row `Node::find` in `tree` — 6 vs 44 statements, red)*, each a bounded number of queries: `tree`, `changes`, `search`,
   `versions`, `conflicts` (list), `locks` (list), `trash` (list), with the batched
   `load_manifests`/`load_version_sizes` helpers. Guard: a test that counts sqlx statements via a
   `tracing` layer and asserts the count is **constant in N** (mutation-check by replacing one
@@ -253,7 +257,7 @@ that file against the Rust binary with `0 skips`, run from the repo root with
   concurrent-seq property (`test/services/sync/concurrent_seq_test.rb`): 16 tasks × 25
   allocations on separate connections → exactly `1..400`, gapless; then the same through real
   begin+finalize. Runs on SQLite always, on Postgres when `TEST_DATABASE_URL` is set.
-- [x] **2.2 Chunk store trait + `local` store** *(tamper/expiry/never-uploaded are pinned by `16-blob-tier.yml`; the 413 oversize case is still untested)* (`presign_put`/`presign_get`/`exists`/`put`/
+- [x] **2.2 Chunk store trait + `local` store** *(tamper/expiry/never-uploaded are pinned by `16-blob-tier.yml`; the 413 oversize case by `tests/limits.rs`)* (`presign_put`/`presign_get`/`exists`/`put`/
   `last_modified`/`list`/`delete`; key `chunks/<user>/<hash>`; HMAC scheme byte-identical to
   `Sync::Storage::LocalChunkStore`; public base = `CHUNK_PUBLIC_URL` else the request's
   scheme+host — honour `X-Forwarded-Proto`/`Host` behind kamal-proxy). Blob endpoints with the
@@ -268,7 +272,7 @@ that file against the Rust binary with `0 skips`, run from the repo root with
 - [x] **2.5 trash list/restore** with the caller-supplied `to_root`. → `05-trash.yml`.
 - [x] **2.6 tree + search** against a mutated tree. → `06-tree-search.yml`.
 - [x] **2.7 conflicts keep/split, restore-to-version.** → `07-conflicts.yml`.
-- [x] **2.8 locks.** *(the expiry unit test is still to write)* → `08-locks.yml`. Plus a unit test for expiry (advance a mocked clock).
+- [x] **2.8 locks.** *(expiry: `tests/limits.rs`, with an explicit clock — held at TTL−1 s, taken over at TTL+1 s, the old holder cannot release the new lock)* → `08-locks.yml`. Plus a unit test for expiry (advance a mocked clock).
 - [x] **2.9 chunks/download.** → `09-chunks.yml`.
 - [x] **2.10 share links + anonymous redeem.** → `10-share-links.yml`.
 - [x] **2.11 admin provisioning.** → `11-admin.yml`, then the §3 files `12`–`16`.
@@ -285,10 +289,14 @@ that file against the Rust binary with `0 skips`, run from the repo root with
   `{head_seq}` per **request** (the cascade and the split broadcast once, with the last seq, as
   the controllers do). Test: drive it with tungstenite exactly as `sync-client::watch_library`
   does (copy the frames, note the source), commit, assert the nudge arrives within a second.
-- [ ] **3.2 `s3` store** with aws-sdk-s3: path-style, custom endpoint, `region=auto`, PUT 900 s /
+- [x] **3.2 `s3` store** with aws-sdk-s3: path-style, custom endpoint, `region=auto`, PUT 900 s /
   GET 3600 s presigns, paginated list, idempotent delete. Test against a MinIO/SeaweedFS container
   where Docker exists; otherwise assert the **wire** — the signed URL's canonical request — not a
   round trip through the SDK (CLAUDE.md §5's `FakeS3` lesson).
+  **2026-09-30:** `src/store/s3.rs`; the wire tests pin path-style host + key, the SigV4 query
+  parameters, determinism, and that the secret and the user are in the signature. No Docker on the
+  development box, so the bucket round trip is a **manual gate** (a SeaweedFS/MinIO run, recorded
+  in the cutover PR) — not covered by CI, and the README says so.
 - [x] **3.3 GC and retention.** `RetentionPolicy` (`keep_all`, `tiered` with the `<24h` tier
   keyed by `version_id`), `prune_version` claim-then-decrement, `sweep_orphans` compare-and-swap
   with the grace window on `updated_at`, `apply_retention` protecting open conflicts' sides and
@@ -309,20 +317,31 @@ that file against the Rust binary with `0 skips`, run from the repo root with
 - [x] **3.7 `stats`.** Prints the counts `../tinkerex/bin/backup-db` and `bin/restore-db` want
   (`users`, `devices`, `nodes`, `versions`, `chunks`, `manifest_chunks`, `changelog_entries`) in
   the `<label>  <count>` shape they parse.
-- [ ] **3.8 Operational shape.** Graceful shutdown on SIGTERM (finish in-flight commits); request
+- [x] **3.8 Operational shape.** Graceful shutdown on SIGTERM (finish in-flight commits); request
   ids; per-route body limits — a 100,000-entry manifest is roughly 10 MiB of JSON, so
   `POST /v1/commit` gets 16 MiB, every other JSON route 1 MiB, the blob PUT 64 MiB (measure the
   100k case and record it); a per-request timeout; `Content-Type` `application/json`.
-- [ ] **3.9 The image.** Multi-stage Dockerfile (`rust:bookworm` → `debian:bookworm-slim` with
+  **Measured 2026-09-30** (`tests/limits.rs`): 20,000 manifest entries serialize to ~2.0 MB and
+  150,000 to 15.4 MB, so 100,000 is ~10.3 MB — inside the 16 MiB commit limit with room; a 64 MiB+1
+  blob answers 413 `chunk too large`, an over-limit JSON body 413 `{"error":"body too large"}`.
+  Request ids (`x-request-id`, generated or propagated) and a 120 s timeout (408) are layered in
+  `http::router`; the websocket is added after the timeout layer and is exempt.
+- [x] **3.9 The image.** Multi-stage Dockerfile (`rust:bookworm` → `debian:bookworm-slim` with
   `ca-certificates` and **`curl`**, which `bin/restore-db` execs inside the container); uid 1000;
   `WORKDIR /rails/host`; entrypoint runs `migrate` only when the command is `serve`; `EXPOSE 3000`;
   OCI revision label as `bin/build-and-push` sets it. Measured size recorded in the README beside
   the Ruby image's 422 MB.
-- [ ] **3.10 CI.** New jobs in `.github/workflows/ci.yml`: `rust-check` (fmt, clippy, deny,
+  **2026-09-30:** `Dockerfile.rust` + `bin/docker-entrypoint-rust`; `SYNC_IMPL=rust bin/build-and-push`
+  selects it (same tags and revision label as the Ruby image). **Written, not built** — the
+  development box has no Docker; the first build on the Mac measures the size and fills the README.
+- [x] **3.10 CI.** New jobs in `.github/workflows/ci.yml`: `rust-check` (fmt, clippy, deny,
   `cargo test`), `conformance-rust` (build, `migrate`, `device issue`, `serve` on 3004 with
   `SYNC_ADMIN_TOKEN=conformance-corpus-admin-token STORAGE_BACKEND=local`, wait on `/up`, run the
   verifier, parse the summary line for `0 skips` and nonzero runs exactly as the Ruby job does).
   The Ruby jobs keep running until Phase 6.
+  **2026-09-30:** both jobs written (the second is `bin/conformance-rust`, which does all of that);
+  every step was run by hand on the development box, none yet on the Mac runner — the first PR
+  run is the proof.
 
 ---
 

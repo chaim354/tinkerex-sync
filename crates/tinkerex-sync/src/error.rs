@@ -22,6 +22,10 @@ pub enum ApiError {
     Conflict(String),
     #[error("{0}")]
     ServiceUnavailable(String),
+    /// A body over the route's limit (plan §3.8); Rails had no limit of its own, so this shape
+    /// is the Rust server's alone.
+    #[error("{0}")]
+    PayloadTooLarge(String),
     #[error("chunks missing")]
     ChunksMissing(Vec<String>),
     #[error("internal: {0}")]
@@ -55,6 +59,7 @@ impl IntoResponse for ApiError {
             ApiError::ServiceUnavailable(m) => {
                 (StatusCode::SERVICE_UNAVAILABLE, json!({ "error": m }))
             }
+            ApiError::PayloadTooLarge(m) => (StatusCode::PAYLOAD_TOO_LARGE, json!({ "error": m })),
             ApiError::ChunksMissing(missing) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 json!({ "error": "chunks_missing", "missing": missing }),

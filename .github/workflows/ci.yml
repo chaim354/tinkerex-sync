@@ -202,3 +202,64 @@ jobs:
       - name: Stop the standalone host
         if: always()
         run: lsof -ti tcp:3003 | xargs -r kill || true
+
+  # THE RUST SERVER (crates/tinkerex-sync), the rewrite the corpus exists to grade. Both jobs run
+  # beside the Ruby ones until Phase 6 of docs/superpowers/plans/2026-09-30-rust-rewrite.md
+  # retires the Ruby host. The runner already carries rustup (it builds chaim354/tinkerex-client);
+  # nothing is installed here beyond cargo-deny, idempotently, because the box is persistent.
+  rust-check:
+    runs-on: [ self-hosted, macos ]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain present
+        run: rustc --version && cargo --version
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy, warnings are errors
+        run: cargo clippy --all-targets -- -D warnings
+
+      # PERMISSIVE LICENCES ONLY (CLAUDE.md §1), as a gate rather than a rule: deny.toml allows
+      # MIT/Apache/BSD/ISC/Zlib/Unicode and refuses the rest. Mutation-checked on 2026-09-30 with a
+      # GPL path crate (red), so an allow-list typo that lets everything through would show here.
+      - name: Licences and sources (cargo-deny)
+        run: |
+          command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny --locked
+          cargo deny check licenses sources
+
+      # Unit + integration tests on SQLite. The Postgres leg of tests/concurrency.rs runs only with
+      # TEST_DATABASE_URL and PRINTS that it did not run otherwise; this runner has no Postgres, so
+      # that leg is a documented manual gate until one exists (plan §6) -- do not read this step's
+      # green as covering it.
+      - name: Tests
+        run: cargo test
+
+  # THE CORPUS AGAINST THE RUST BINARY: the same sixteen files, the same Ruby verifier, a fresh
+  # database and device, port 3004 so it can share the box with the Ruby job. bin/conformance-rust
+  # boots the binary the way the Ruby job boots host/ (STORAGE_BACKEND=local, the corpus's fixed
+  # SYNC_ADMIN_TOKEN), waits on /up, and parses the verifier's own summary line -- failing on a
+  # nonzero skip count or zero runs, the same two false-green shapes the Ruby job guards against.
+  conformance-rust:
+    runs-on: [ self-hosted, macos ]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install gems
+        run: bundle install --quiet
+
+      - name: Kill a stale listener on 3004
+        run: |
+          if [ -n "$(lsof -ti tcp:3004 || true)" ]; then
+            echo "port 3004 already in use -- killing stale listener(s)"
+            lsof -ti tcp:3004 | xargs -r kill -9 || true
+            sleep 1
+          fi
+
+      - name: Build, boot, verify
+        run: SYNC_PORT=3004 bin/conformance-rust
+
+      - name: Stop the Rust server
+        if: always()
+        run: lsof -ti tcp:3004 | xargs -r kill || true

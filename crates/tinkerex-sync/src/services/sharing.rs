@@ -119,14 +119,18 @@ pub async fn show(db: &Db, cap: &Capability) -> ApiResult<Shown> {
     })
 }
 
-pub fn presign_urls(
+pub async fn presign_urls(
     store: &ChunkStore,
     base_url: &str,
     cap: &Capability,
     now: Timestamp,
-) -> BTreeMap<String, String> {
-    cap.chunk_hashes
-        .iter()
-        .map(|h| (h.clone(), store.presign_get(base_url, cap.owner_id, h, now)))
-        .collect()
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut urls = BTreeMap::new();
+    for h in &cap.chunk_hashes {
+        urls.insert(
+            h.clone(),
+            store.presign_get(base_url, cap.owner_id, h, now).await?,
+        );
+    }
+    Ok(urls)
 }

@@ -8,9 +8,12 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, FromRequest, FromRequestParts, Request};
+use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, header};
 use axum::routing::{delete, get, post, put};
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::{Identity, authenticate};
@@ -37,6 +40,10 @@ pub const JSON_BODY_LIMIT: usize = 1024 * 1024;
 /// The blob tier's per-chunk cap (FastCDC chunks are KB-scale); one byte more is read so the
 /// handler can answer the Rails-shaped 413 itself.
 pub const BLOB_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// A request that has not answered in this long is cut off with 408. Generous, because a blob
+/// PUT of 64 MiB over a slow link is a legitimate request; the websocket is exempt (its upgrade
+/// answers at once and the socket lives outside the request future).
+pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Every route the binary serves, for the coverage guard and `tinkerex-sync routes`.
 pub const ROUTES: &[(&str, &str)] = &[
@@ -114,9 +121,17 @@ pub fn router(state: State) -> Router {
                 .get(blob_download),
         )
         .route("/v1/admin/libraries", post(admin_libraries_create))
-        .route("/cable", get(cable::cable))
+        // The route-level limits above override this default: axum's DefaultBodyLimit is an
+        // extension the innermost layer writes last (tests/limits.rs proves it).
         .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
+        .route("/cable", get(cable::cable))
         .layer(TraceLayer::new_for_http())
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .with_state(state)
 }
 
@@ -154,9 +169,13 @@ impl FromRequest<State> for Body {
             .and_then(|v| v.to_str().ok())
             .map(|ct| ct.to_ascii_lowercase().contains("json"))
             .unwrap_or(true);
-        let bytes = Bytes::from_request(req, state)
-            .await
-            .map_err(|e| ApiError::BadRequest(e.body_text()))?;
+        let bytes = Bytes::from_request(req, state).await.map_err(|e| {
+            if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                ApiError::PayloadTooLarge("body too large".into())
+            } else {
+                ApiError::BadRequest(e.body_text())
+            }
+        })?;
         if !is_json || bytes.iter().all(u8::is_ascii_whitespace) {
             return Ok(Body(serde_json::Map::new()));
         }

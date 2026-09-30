@@ -152,10 +152,13 @@ pub async fn begin(
         .into_iter()
         .filter(|h| !present.contains(h))
         .collect();
-    let put_urls = missing
-        .iter()
-        .map(|h| (h.clone(), store.presign_put(base_url, user_id, h, now)))
-        .collect();
+    let mut put_urls = BTreeMap::new();
+    for h in &missing {
+        put_urls.insert(
+            h.clone(),
+            store.presign_put(base_url, user_id, h, now).await?,
+        );
+    }
     Ok(Begun {
         commit_id,
         missing,

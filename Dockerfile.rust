@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+# check=error=true
+
+# THE SYNC SERVER AS ONE STATIC-ISH BINARY: the Rust rewrite of host/ (crates/tinkerex-sync).
+# Built with `SYNC_IMPL=rust bin/build-and-push`; the Ruby image stays in ./Dockerfile until
+# Phase 6 of docs/superpowers/plans/2026-09-30-rust-rewrite.md retires it.
+#
+# SAME PATHS, PORT AND ENV NAMES AS THE RUBY IMAGE, on purpose (plan D2): the maker repo's
+# `sync` accessory block in config/deploy.yml changes by zero lines at cutover. /rails/host is
+# still the working directory, /rails/host/storage still holds the SQLite file and, with
+# STORAGE_BACKEND=local, every chunk byte -- the volume declared there mounts over it unchanged.
+# uid 1000, so a volume the Ruby container populated is writable here too.
+
+FROM docker.io/library/rust:1-bookworm AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo build --release --locked -p tinkerex-sync && \
+    strip target/release/tinkerex-sync
+
+FROM docker.io/library/debian:bookworm-slim
+
+# curl: bin/restore-db in the maker repo execs it inside the container to probe /up.
+# ca-certificates: STORAGE_BACKEND=s3 presigns against an HTTPS endpoint.
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y ca-certificates curl && \
+    rm -rf /var/lib/apt/lists /var/cache/apt/archives
+
+RUN groupadd --system --gid 1000 rails && \
+    useradd rails --uid 1000 --gid 1000 --create-home --shell /bin/bash
+
+COPY --from=build /src/target/release/tinkerex-sync /usr/local/bin/tinkerex-sync
+COPY bin/docker-entrypoint-rust /usr/local/bin/docker-entrypoint
+
+# STORAGE HOLDS THE DATABASE AND, WITH STORAGE_BACKEND=local, THE CHUNKS THEMSELVES. It must be a
+# VOLUME in any real deployment: losing it loses the library, not a cache.
+RUN mkdir -p /rails/host/storage /rails/host/tmp && chown -R rails:rails /rails
+
+USER 1000:1000
+WORKDIR /rails/host
+
+# The defaults the Ruby host's config resolved to; the accessory's env overrides any of them.
+ENV SQLITE_DATABASE=/rails/host/storage/production.sqlite3 \
+    CHUNK_LOCAL_DIR=/rails/host/storage/chunk-store \
+    BIND=0.0.0.0 \
+    PORT=3000
+
+# `migrate` RUNS IN THE ENTRYPOINT FOR THE SERVER ONLY, so `docker exec ... tinkerex-sync stats`
+# and one-off `gc` runs never migrate as a side effect -- the same guard host/bin/docker-entrypoint
+# kept around db:prepare.
+ENTRYPOINT ["docker-entrypoint"]
+
+EXPOSE 3000
+CMD ["tinkerex-sync", "serve"]

@@ -60,8 +60,19 @@ echo "$KAMAL_REGISTRY_PASSWORD" | docker login ghcr.io -u chaim354 --password-st
 # fail here, it fails on the box as an exec-format error, far from this line. --platform forces
 # the target explicitly; buildx cross-builds via QEMU emulation when the host arch differs,
 # matching config/deploy.yml's own `builder: arch: amd64` for this same app.
-docker buildx build --platform linux/amd64 \
+# WHICH IMPLEMENTATION: the Ruby host (./Dockerfile, the default until Phase 6 of the rewrite plan)
+# or the Rust server (./Dockerfile.rust). Same registry, same tags, same revision label -- the
+# accessory that pulls `:latest` cannot tell them apart, which is the whole cutover design
+# (docs/superpowers/plans/2026-09-30-rust-rewrite.md §7): retag to roll forward or back.
+case "${SYNC_IMPL:-ruby}" in
+  ruby) DOCKERFILE=Dockerfile ;;
+  rust) DOCKERFILE=Dockerfile.rust ;;
+  *) echo "SYNC_IMPL must be ruby or rust, not '${SYNC_IMPL}'" >&2; exit 2 ;;
+esac
+
+docker buildx build --platform linux/amd64 -f "$DOCKERFILE" \
   --label "org.opencontainers.image.revision=$REVISION" \
+  --label "org.opencontainers.image.description=tinkerex-sync ($SYNC_IMPL)" \
   -t "$IMAGE" -t "$REPO:$REVISION" --push .
 
-echo "pushed $IMAGE (revision $REVISION)"
+echo "pushed $IMAGE (revision $REVISION, $DOCKERFILE)"

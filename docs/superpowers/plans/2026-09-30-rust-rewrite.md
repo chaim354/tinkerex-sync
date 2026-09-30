@@ -422,14 +422,14 @@ Record the arc in the Kaneo record via the maker repo's `bin/log`, as every arc 
 
 ## 8. Cross-repo work (each its own PR in its own repo)
 
-- [ ] **8.1 `tinkerex`: `bin/sync-server`** gains `SYNC_IMPL=rust|ruby` (default `ruby` until
+- [x] **8.1 `tinkerex`: `bin/sync-server`** *(branch `claude/rust-sync-server` there, 2026-09-30: the Rust arm keeps its own database and chunk dir under `tmp/`, writes the same env file; driven for real — prepare, start, whoami, admin door 201; the script test gained a stubbed Rust-arm happy path, mutation-checked; `bin/ci test-chunk-remote`'s run-count parity is still to be measured on the Mac runner)* gains `SYNC_IMPL=rust|ruby` (default `ruby` until
   cutover, then `rust`, then the switch is removed with the Ruby): `prepare` = `cargo build
   --release --manifest-path ../tinkerex-sync/Cargo.toml` (or `TINKEREX_SYNC_BIN`), `migrate`,
   `device issue`; `start` = `serve --bind 127.0.0.1 --port $SYNC_PORT` with
   `STORAGE_BACKEND=local`. The `unset_inherited_bundler_env` trap does not apply to a Rust
   child, but leave the function for the Ruby arm until it is deleted. `config/ci.rb`'s
   `test-chunk-remote` gate must report the **same run count** as the other two legs (§15 there).
-- [ ] **8.2 `tinkerex-client`: enrolment against the real server.** The server-backed suites and
+- [x] **8.2 `tinkerex-client`: enrolment against the real server.** *(branch `claude/sync-server-enrolment` there, 2026-09-30: `SYNC_IT_ADMIN_TOKEN` switches `enroll` to `POST /v1/admin/libraries`, a second device joins via `create_device`; measured against the Rust binary with `SYNC_VERIFY_FINALIZE=0`: integration 25, fault_injection 11, two_device_e2e 9, parallel_hydration 8, offline_availability 5, adversarial_sync/concurrency_load/multifiletype_conformance 4 each, scale/reconcile_sweep 1 each, all passing; the password-login test prints SKIPPED there; that repo's CLAUDE.md §5 now says so)* The server-backed suites and
   examples call `enroll` → `/v1/test/users` + `/v1/devices/login`, which the sync server does not
   have. Add `SYNC_IT_ADMIN_TOKEN`: when set, `two_devices()` provisions through
   `POST /v1/admin/libraries` and uses the returned token; `RegisterResponse.head_seq` is then read
@@ -437,13 +437,21 @@ Record the arc in the Kaneo record via the maker repo's `bin/log`, as every arc 
   `adversarial_sync`, `concurrency_load`, `two_device_e2e`, `scale`, `fault_injection` against the
   Rust binary and record the counts in that repo's CLAUDE.md §5 table, which currently says these
   run against `tinkerex-sync` — a claim this plan found false.
-- [ ] **8.3 `tinkerex`: `bin/restore-db`** — the `sync` arm's `bin/rails runner 'puts …'` becomes
+- [x] **8.3 `tinkerex`: `bin/restore-db`** — the `sync` arm's `bin/rails runner 'puts …'` becomes
   `docker exec … tinkerex-sync stats`; `ops/backup-db.sh` needs nothing (it reads the volume with
   its own sqlite3). `test/bin_sync_server_test.rb` there covers the script change.
-- [ ] **8.4 Docs.** `../tinkerex/docs/sync-protocol.md`: endpoint count and the "not yet built"
+  **2026-09-30 (same maker branch as 8.1):** the arm probes the container for the binary and reads
+  `stats --brief`, falling back to `bin/rails runner` on the Ruby image, so a rolled-back container
+  verifies the same way as a rolled-forward one. Shell, not unit-tested — it is an ssh + docker exec
+  line the way the rest of that script is (maker CLAUDE.md §14i's "nothing in `bin/ci` can go red").
+- [x] **8.4 Docs.** `../tinkerex/docs/sync-protocol.md`: endpoint count and the "not yet built"
   Rust row in §2's table; `../tinkerex/CLAUDE.md` §3/§14j (still describes this repo as a Rails
   engine, and §14j's "device auth is duplicated by structural necessity" now names a Rust
   function); `../tinkerex-client/CLAUDE.md` §7 and its §5 claim about the integration suites.
+  **2026-09-30:** all three edited on the branches 8.1 and 8.2 name — the protocol doc's intro and
+  table row (the embedded form's retirement noted alongside), the maker §3 row and the §14j bullet
+  (`crates/tinkerex-sync/src/auth.rs`'s `authenticate`), and the client §5 table of measured suite
+  counts plus the two env knobs, with §7's row noting the `/cable` change.
 
 ---
 

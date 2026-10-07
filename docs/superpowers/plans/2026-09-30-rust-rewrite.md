@@ -336,7 +336,8 @@ that file against the Rust binary with `0 skips`, run from the repo root with
   OCI revision label as `bin/build-and-push` sets it. Measured size recorded in the README beside
   the Ruby image's 422 MB.
   **2026-09-30:** `Dockerfile.rust` + `bin/docker-entrypoint-rust`; `SYNC_IMPL=rust bin/build-and-push`
-  selects it (same tags and revision label as the Ruby image). **Written, not built** — the
+  selects it (same tags and revision label as the Ruby image — tags since 2026-10-07: `:<sha>-ruby` /
+  `:<sha>-rust`, cutover plan §2.1). **Written, not built** — the
   development box has no Docker; the first build on the Mac measures the size and fills the README.
 - [x] **3.10 CI.** New jobs in `.github/workflows/ci.yml`: `rust-check` (fmt, clippy, deny,
   `cargo test`), `conformance-rust` (build, `migrate`, `device issue`, `serve` on 3004 with
@@ -418,11 +419,21 @@ back from a `docker inspect`.
 > `bin/build-and-push` moves `:latest` on every build, so a rehearsal image needs a revision-only
 > push. Each step here keeps its box; the figures land here when that plan's phases run.
 
-- [ ] **7.1 Rehearse rollback first, off the box.** Restore a fresh `bin/backup-db sync` archive
+- [x] **7.1 Rehearse rollback first, off the box.** Restore a fresh `bin/backup-db sync` archive
   into a throwaway volume (`bin/restore-db sync <archive> --into rehearsal --yes`), run the
   Rust image against it, run corpus files 02–10 with a fresh user, stop it, boot the **Ruby**
   image against the same volume, run 02–10 again with another fresh user, and read back the nodes
   the Rust run created through `GET /v1/tree`. Record both outputs in the cutover PR.
+  **2026-10-07, per the cutover plan's §3, before any image was pushed** (the ghcr token had
+  expired, so the Rust image reached the box by `docker save | docker load` and the Ruby image is
+  the one running, `R = 4148fcd6`): archive `7 nodes, 3 versions`; Rust `Adopted`, whole corpus with
+  a fresh user `18 runs, 284 assertions, 0 failures, 0 errors, 0 skips`, then `41 nodes, 38
+  versions`; Ruby on the same volume `41 nodes, 38 versions`, authenticates both Rust-issued tokens
+  (200), `/v1/tree` lists the 28 Rust-written nodes, corpus minus 11/14 with a Ruby-issued user
+  `14 runs, 231 assertions, 1 failure` — the numeric `expires_at` case, which is `5d600bf`'s own fix
+  and absent from `R` by construction — then `71 nodes, 72 versions`; Rust again `Adopted`,
+  `71 nodes, 72 versions`, reads Ruby's rows with Ruby's token (200). A Ruby-written chunk hydrated
+  through Rust: sha256 of the bytes equals the hash. Full figures: cutover plan §0.5.
 - [ ] **7.2 Backup the live accessory** (`bin/backup-db sync`), verify the archive's counts.
 - [ ] **7.3 Swap.** Retag: `:latest` → the Rust revision; `bin/kamal accessory reboot sync` from the
   maker repo (its `deploy.yml` is unchanged). Probes, in order: `/up` 200; `whoami` with an

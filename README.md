@@ -113,7 +113,8 @@ extracted from.
 ## Deploying it
 
 `Dockerfile` and `config/deploy.yml` are here. The image is **422 MB** against the maker app's
-1.59 GB, because this one installs none of what that one needs — libvips, pdfium, resvg, f3d, the
+1.59 GB (on the Unraid box's own daemon it lists at 398 MB, and the Rust image beside it at 168 MB —
+`crates/tinkerex-sync/README.md`), because this one installs none of what that one needs — libvips, pdfium, resvg, f3d, the
 Rust STL thumbnailer, Node and asset precompilation. This app is `api_only`; it holds chunks and
 serves JSON.
 

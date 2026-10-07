@@ -38,7 +38,12 @@ Project context for an AI coding agent (Claude Code) and human developers.
    the cargo gates and the two legs CI cannot run. **Until Phase 6 of that plan, a change to
    endpoint behaviour moves three things: the Ruby, the Rust, and the corpus.** The Ruby host is
    still what production runs; `Dockerfile.rust` and `SYNC_IMPL=rust bin/build-and-push` are the
-   cutover's image, written but not yet built or deployed.
+   cutover's image. **The cutover itself -- a retag of one image and a reboot of one container,
+   rehearsed first on a throwaway volume, rolled back by the reverse retag -- is
+   `docs/superpowers/plans/2026-10-07-rust-cutover.md`.** Read its §0 before touching
+   `Dockerfile.rust`, `bin/build-and-push`, or the maker repo's `sync` accessory: it names three
+   things the rewrite plan assumed wrongly (no `sqlite3` in the image, no door for devices, a
+   build script that moved `:latest` on every build).
 
 ---
 

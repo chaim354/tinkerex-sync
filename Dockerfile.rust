@@ -22,8 +22,16 @@ FROM docker.io/library/debian:bookworm-slim
 
 # curl: bin/restore-db in the maker repo execs it inside the container to probe /up.
 # ca-certificates: STORAGE_BACKEND=s3 presigns against an HTTPS endpoint.
+# sqlite3: THE MAKER REPO'S BACKUP AND RESTORE RUN IT INSIDE THIS IMAGE, not on the box. Its
+#   ops/backup-db.sh runs its worker as `docker run --rm --user 0 -v "$src:/src" "$image" sh -c
+#   "$WORKER"` where `$image` is the running tinkerex-sync container's image, and the worker calls
+#   `sqlite3 .backup` and `PRAGMA integrity_check`; bin/restore-db's `--into` verify does the same,
+#   and a real restore runs bin/backup-db first, so it needs it too. Without this line the nightly
+#   `sync` archive fails from the first night after the cutover -- loudly (`!! sync: FAILED`, exit 1,
+#   Kuma `down`), but with nothing to restore from until someone reads it -- and `bin/restore-db
+#   sync` cannot run (docs/superpowers/plans/2026-10-07-rust-cutover.md §0.3.1). Mirrors ./Dockerfile.
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y ca-certificates curl && \
+    apt-get install --no-install-recommends -y ca-certificates curl sqlite3 && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
 RUN groupadd --system --gid 1000 rails && \

@@ -120,7 +120,6 @@ docker exec rust-smoke tinkerex-sync doctor
 docker rm -f rust-smoke
 ```
 
-
 ## The image
 
 `Dockerfile.rust` (`SYNC_IMPL=rust bin/build-and-push`) keeps the Ruby image's paths, port, uid and

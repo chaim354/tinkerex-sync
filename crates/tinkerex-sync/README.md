@@ -96,6 +96,24 @@ TEST_S3_ENDPOINT=http://127.0.0.1:8333 TEST_S3_BUCKET=b \
   TEST_S3_ACCESS_KEY_ID=… TEST_S3_SECRET_ACCESS_KEY=… cargo test --test s3_roundtrip
 ```
 
+The image, built for the box's platform and smoke-tested locally, **without pushing** (the cutover
+plan's §2.1). `sqlite3` must be present: the maker repo's backup and restore run it inside this
+image (`Dockerfile.rust` says where).
+
+```sh
+docker buildx build --platform linux/amd64 -f Dockerfile.rust -t tinkerex-sync:rust-local --load .
+docker image ls tinkerex-sync:rust-local
+docker run --rm tinkerex-sync:rust-local tinkerex-sync --version
+docker run --rm --entrypoint sh tinkerex-sync:rust-local -c 'command -v sqlite3 && sqlite3 --version && command -v curl'
+docker run --rm -d --name rust-smoke -p 127.0.0.1:3007:3000 \
+  -e STORAGE_BACKEND=local -e SECRET_KEY_BASE=smoke-only tinkerex-sync:rust-local
+docker logs rust-smoke                               # the entrypoint's migrate prints `Created`
+curl -s http://127.0.0.1:3007/up; echo               # ok
+docker exec rust-smoke tinkerex-sync stats --brief   # 0 nodes, 0 versions
+docker exec rust-smoke tinkerex-sync doctor
+docker rm -f rust-smoke
+```
+
 Measured 2026-09-30 on the development box: `bin/conformance-rust` reports
 `18 runs, 284 assertions, 0 failures, 0 errors, 0 skips` on SQLite and the same on Postgres 16 —
 the figure the Ruby host reports on a fresh database; the whole `cargo test` suite passes on
@@ -105,5 +123,15 @@ and GET, a commit whose finalize verifies against the bucket).
 ## The image
 
 `Dockerfile.rust` (`SYNC_IMPL=rust bin/build-and-push`) keeps the Ruby image's paths, port, uid and
-entrypoint guard. It has not been built on this branch's development box (no Docker there); its
-size is to be measured on first build and recorded here beside the Ruby image's 422 MB.
+entrypoint guard, and installs `sqlite3` beside `curl` because the maker repo's backup and restore
+run it inside the deployment's image. **Measured 2026-10-07**, first build, `linux/amd64` on an
+Apple-silicon Docker Desktop via the smoke above: **168 MB** loaded on the Unraid box, where the
+Ruby image it replaces lists at **398 MB** (`docker images` on the same daemon; Docker Desktop's
+own listing shows the Rust image as 44 MB, its compressed size). `tinkerex-sync 0.1.0`, sqlite3
+3.40.1, the entrypoint's `migrate` printed `Created`, `/up` answered `ok`, `stats --brief`
+`0 nodes, 0 versions`.
+
+The revision tag `bin/build-and-push` pushes carries the implementation -- `:<sha>-rust` beside
+`:<sha>-ruby` -- and `SYNC_PUSH_LATEST=0` pushes it WITHOUT moving `:latest`, which is what the
+maker app's accessory pulls on its next reboot. Promotion is a separate retag (the cutover plan's
+§4.2); so is the rollback (§6). `test/build_and_push_test.rb` drives the script's tagging.

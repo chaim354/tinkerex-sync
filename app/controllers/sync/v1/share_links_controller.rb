@@ -21,12 +21,23 @@ module Sync
       require_capability! :versioned
 
       # POST /v1/share_links { node_id, version_id, expires_at? } -> { id, token } (token once)
+      #
+      # ONLY A STRING REACHES THE DATETIME COLUMN. Active Record's datetime cast parses a String
+      # (an unparseable one becomes nil -- a link that never expires, the recorded and accepted
+      # behaviour) but passes any NON-string through untouched, so a JSON number here was stored
+      # as a raw INTEGER in `expires_at`. That link then answered 500 on every redeem
+      # (`undefined method 'future?' for an instance of Integer`, ShareLink#live?), and because
+      # Sync::Gc.referenced_version_ids calls live? on every one of the user's links, one such row
+      # aborted the user's whole nightly retention pass. Found by conformance/scenarios/
+      # 15-share-links-edge.yml while extending the corpus (2026-09-30). A non-string is treated
+      # exactly like an unparseable string: no expiry.
       def create
+        raw_expiry = params[:expires_at]
         link = Sync::Sharing::Links.create_for_version!(
           user: current_user,
           node_id: params.require(:node_id),
           version_id: params.require(:version_id),
-          expires_at: params[:expires_at]
+          expires_at: raw_expiry.is_a?(String) ? raw_expiry : nil
         )
         render json: { id: link.id, token: link.raw_token, version_id: link.version_id,
                        expires_at: link.expires_at }, status: :created

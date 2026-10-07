@@ -1,0 +1,11 @@
+#!/bin/bash -e
+# The Rust image's entrypoint (Dockerfile.rust). Brings the database to shape BEFORE the server
+# starts, and only for the server: the first Ruby deployment came up "healthy" on an empty
+# database because nothing in the boot path read the schema (host/bin/docker-entrypoint tells that
+# story). `tinkerex-sync migrate` creates a fresh Rails-shaped schema or adopts an existing Rails
+# file untouched, so this is safe against a volume the Ruby container filled.
+if [ "${1}" == "tinkerex-sync" ] && [ "${2}" == "serve" ]; then
+  tinkerex-sync migrate
+fi
+
+exec "${@}"

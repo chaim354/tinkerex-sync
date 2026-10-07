@@ -62,6 +62,21 @@ module V1
       assert_response :not_found
     end
 
+    # A JSON number for expires_at once landed in the datetime column as a raw Integer (the AR
+    # cast only parses Strings), and that link 500'd on every redeem. Mutation-checked: with the
+    # controller's `is_a?(String)` guard removed, the redeem below raises NoMethodError.
+    test "a numeric expires_at means no expiry, and the link redeems" do
+      post "/v1/share_links",
+           params: { node_id: @node_id, version_id: @version_id, expires_at: 12345 },
+           as: :json, headers: auth(@token)
+      assert_response :created
+      body = JSON.parse(response.body)
+      assert_nil body["expires_at"], "a non-string expiry is no expiry, like an unparseable one"
+
+      get "/v1/share/#{body['token']}"
+      assert_response :success
+    end
+
     test "an unknown token is 404 on view and download" do
       get "/v1/share/nope"
       assert_response :not_found

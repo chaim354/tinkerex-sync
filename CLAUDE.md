@@ -31,6 +31,14 @@ Project context for an AI coding agent (Claude Code) and human developers.
    **`host/` is a real Rails app that mounts it** and supplies the host obligations §4c lists —
    `User`, `Node`, `Device`, `ApplicationRecord`, `ApplicationJob`, `ApplicationCable`. `test/dummy`
    is a *third* thing: a minimal host that exists to prove the engine boots without any of this.
+4. **The Rust rewrite exists, beside the Ruby, under `crates/tinkerex-sync`** (since 2026-09-30;
+   plan and status: `docs/superpowers/plans/2026-09-30-rust-rewrite.md`). One binary serves the
+   same wire from the same image paths and env; the corpus grades it (`bin/conformance-rust`:
+   `18 runs, 284 assertions, 0 failures, 0 skips`, the Ruby host's own figure); its README lists
+   the cargo gates and the two legs CI cannot run. **Until Phase 6 of that plan, a change to
+   endpoint behaviour moves three things: the Ruby, the Rust, and the corpus.** The Ruby host is
+   still what production runs; `Dockerfile.rust` and `SYNC_IMPL=rust bin/build-and-push` are the
+   cutover's image, written but not yet built or deployed.
 
 ---
 
@@ -319,10 +327,10 @@ implementations by shared code rather than by the wire. `conformance/README.md` 
 implementer who does not read Ruby* and is the authority on the format; this section only says what
 a change in *this* repo owes it.
 
-- **Eleven scenarios** (`conformance/scenarios/01-enrolment.yml` … `11-admin.yml`), a `runner.rb`,
+- **Sixteen scenarios** (`conformance/scenarios/01-enrolment.yml` … `16-blob-tier.yml`), a `runner.rb`,
   and a `schema.json`.
 - **THEY SKIP UNLESS `SYNC_SERVER_URL` IS SET**, because they drive a **real running server** over
-  HTTP. `bundle exec rake test` on its own reports **12 skips — 11 of them the entire corpus**, plus
+  HTTP. `bundle exec rake test` on its own reports **17 skips — 16 of them the entire corpus**, plus
   one Postgres-only pooler probe. A green local run therefore proves nothing about the wire.
 - **CI closes that hole two ways**, and both matter. It **boots a real server** (127.0.0.1:3003)
   and points `SYNC_SERVER_URL` at it, so the corpus genuinely runs there rather than skipping; and
@@ -339,10 +347,10 @@ a change in *this* repo owes it.
 ## 8. Build, deploy, and CI
 
 ```sh
-bundle install && bundle exec rake test        # 254 runs / 755 assertions / 12 skips (see §7)
+bundle install && bundle exec rake test        # 260 runs / 758 assertions / 17 skips (see §7)
 cd host && bin/rails db:prepare && bin/rails server
 
-# Run the conformance corpus for real (otherwise all 11 scenarios skip):
+# Run the conformance corpus for real (otherwise all 16 scenarios skip):
 SYNC_SERVER_URL=http://localhost:3000 bundle exec rake test
 
 # Count the real endpoint surface rather than trusting a number:

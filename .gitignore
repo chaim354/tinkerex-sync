@@ -1,3 +1,6 @@
 /pkg/
 /.bundle/
 *.gem
+
+/target/
+/vendor/bundle/

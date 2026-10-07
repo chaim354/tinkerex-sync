@@ -11,10 +11,12 @@
 # an argument would make registering the wrong box against the wrong repo a one-character typo,
 # which is worse than two small near-duplicate scripts.
 #
-# WHAT THIS SCRIPT DELIBERATELY DOES NOT INSTALL: Rust, mingw-w64, rclone. tinkerex's version
-# installs all three because its runner cross-compiles the Windows client and drives rclone
-# conformance. This repo is a Rails engine -- its whole suite is `bundle exec rake test` against
-# test/dummy -- so those would be several GB of toolchain that no job here ever invokes.
+# WHAT THIS SCRIPT DELIBERATELY DOES NOT INSTALL: mingw-w64 and rclone (tinkerex's version
+# installs them because its runner cross-compiles the Windows client and drives rclone
+# conformance), and Rust -- which the `rust-check` and `conformance-rust` jobs DO need since
+# 2026-09-30 (crates/tinkerex-sync), but which this box already carries via rustup because it
+# also builds chaim354/tinkerex-client. The check below refuses to register without it rather
+# than installing a second toolchain beside the first.
 #
 #   gh api -X POST repos/chaim354/tinkerex-sync/actions/runners/registration-token --jq .token
 #   ./ci/runners/setup-macos.sh <THAT_TOKEN>
@@ -34,6 +36,7 @@ command -v jq >/dev/null 2>&1 || { echo "jq required: brew install jq"; exit 1; 
 # exactly why .github/workflows/ci.yml uses a bare `bundle install` and no ruby/setup-ruby -- that
 # action assumes a hosted /Users/runner layout this machine does not have.
 ruby -v >/dev/null 2>&1 || { echo "No ruby on PATH -- the workflow expects the box's mise ruby"; exit 1; }
+cargo --version >/dev/null 2>&1 || { echo "No cargo on PATH -- rust-check/conformance-rust need the rustup toolchain tinkerex-client's runner installed"; exit 1; }
 
 ARCH="$( [ "$(uname -m)" = "arm64" ] && echo arm64 || echo x64 )"
 echo "==> Downloading the latest GitHub Actions runner (osx-$ARCH)"

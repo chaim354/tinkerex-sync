@@ -141,8 +141,34 @@ ssh to the box, 1Password service account), the day this plan merged:
   image IS the registry's `:latest`; `ruby-4148fcd68ef16bb29f536ced13cd56c0a5237975` now points at
   that digest too (`imagetools create`, verified by inspect). The rollback target exists in the
   registry and on the box, and is byte-identical to what runs.
-- **§2.4: not run** — waits on this PR merging (the tagging fix is on this branch), then
-  `SYNC_PUSH_LATEST=0 SYNC_IMPL=rust bin/build-and-push` from `main`.
+- **Both PRs merged** (#18 here → `298c065`; chaim354/tinkerex#377 → `d7e225f3`), arcs #323/#324
+  closed.
+- **§2.2 DEPLOYED, 2026-10-07 ~16:34 UTC.** The planned `bin/kamal accessory reboot sync` FAILED
+  halfway: `stop` ran `kamal-proxy remove tinkerex-sync` for a service that had never been
+  registered → "service not found" → abort after `docker container stop`, container left stopped.
+  Recovered with `bin/kamal accessory start sync` (same container `5142870db216`, then `kamal-proxy
+  deploy … --host sync.tinkerex.local --host sync.tinkerex.home`); §2.2's command above is corrected.
+  Probes: `/up` → `ok` through kamal-proxy on BOTH names (Host header straight at the box);
+  `kamal-proxy list` shows `tinkerex-sync` beside the three app services; probe device
+  `cutover-probe@tinkerex-sync.test` (user 6, device 7, Ruby-issued): `whoami` **200**
+  `{"user_id":6,"device_id":7,"head_seq":0}`, **401** without a token. The maker app's
+  `RemoteChangelogPullJob` ran at :32 and :34 with no `FileLayer::FetchError` in its log.
+  **The nudge before-state, measured at the handshake:** a `/cable` upgrade through the proxy with
+  NO Origin header → **404** (the Ruby host's refusal), the same upgrade with an Origin → **101**
+  (so websockets traverse kamal-proxy and the refusal is the server's). The client's watcher is
+  `tungstenite::connect(cable_url)` with no Origin (`client/sync-client/src/lib.rs`
+  `watch_library`), so today's daemon gets no nudge and lives on `DEFAULT_POLL` = 2 s. Deploy
+  record tinkerex#325; the failure and recovery are a note on arc #324. Still outside the repo:
+  the NPM proxy host for `sync.tinkerex.home` and `/etc/hosts` lines for `.local`.
+- **§2.4 DONE.** `SYNC_PUSH_LATEST=0 SYNC_IMPL=rust bin/build-and-push` from `main` `298c065`:
+  `ghcr.io/chaim354/tinkerex-sync:298c065a3a1f0bccd46d764c38ee7d8161ebf895-rust`, manifest
+  `sha256:d281245aeb63ca994e1ccff57e0b92fd7ead40642d0e16c5662f6abe5643facf`, `linux/amd64`,
+  labels `revision=298c065a…` / `description=tinkerex-sync (rust)`; `:latest` still
+  `sha256:9115fae48a02…` (verified after the push). Pre-pulled on the box (168 MB; `tinkerex-sync
+  --version` → `0.1.0` there). *A first attempt was killed before it pushed:* an untracked
+  `.claude/` directory (a git worktree placed under the repo) made `git status --porcelain`
+  non-empty, so the revision would have been `-dirty-rust` — **keep worktrees outside this
+  checkout before running `bin/build-and-push`.**
 - **§3, the rehearsal: RUN**, with the branch-built Rust image and the running Ruby image, both
   local on the box. Archive `tinkerex-sync-20261007T160805Z.tar.gz` (7977 bytes; `integrity_check
   ok — 7 nodes, 3 versions`; 5 users; 3 files in the chunk store). Restored into
@@ -163,9 +189,9 @@ ssh to the box, 1Password service account), the day this plan merged:
   *A first attempt was discarded:* a corpus device issued `--name corpus` fails the four lock
   assertions that expect the default name `device`; the volume was re-restored from the same
   archive before the clean run. **Issue corpus devices with the default name.**
-- **Not run:** §2.2's deploy and probes, §2.4, §4–§6. **Next, in order:** merge both PRs →
-  §2.2's deploy (`bin/kamal accessory reboot sync` pulls `:latest`, still the running Ruby image,
-  so the only change is the proxy registration) and its probes → §2.4's push from `main` → §4.
+- **Not run:** §4–§6. **Next: §4, at a quiet hour the operator picks.** `RUST` is the tag above;
+  `R` is `4148fcd6…`, pinned as `ruby-$R`; the box already holds both images, so the swap's pull
+  is instant and its downtime is the container stop/start.
 
 ---
 
@@ -258,9 +284,14 @@ accessory (`lib/kamal/configuration/accessory.rb`, `running_proxy?`); the keys a
 - Update the `sync:` block's comment ("NO `port:` -> internal-only") and `docs/DEPLOY.md`.
 - Tests: `bin/rails test test/deploy_hygiene_test.rb` (it re-derives the accessory-secrets rule
   from the merged config), then `bin/secrets-preflight`.
-- Deploy [Mac, maker repo root]: `bin/kamal accessory reboot sync`. This pulls `:latest` (still
-  Ruby), stops, removes and starts the container; the maker app's requests during those seconds
-  fail as `FileLayer::FetchError` (a 503 in the UI) and recover on their own. Probes:
+- Deploy [Mac, maker repo root]: **`bin/kamal accessory start sync`, NOT `reboot`, the first time**
+  (measured 2026-10-07: `reboot` runs `stop`, which now deregisters the accessory with
+  `kamal-proxy remove tinkerex-sync` AFTER `docker container stop`; for a never-registered service
+  that answers "service not found", SSHKit aborts, and the container is left STOPPED — about a
+  minute of downtime until `start` recovered it). `start` starts the existing container and runs
+  `kamal-proxy deploy` for it; once the service exists, `reboot` is the ordinary roll command again
+  (so §4.2 is unaffected). The maker app's requests during those seconds fail as
+  `FileLayer::FetchError` (a 503 in the UI) and recover on their own. Probes:
   `curl -s http://sync.tinkerex.local/up` → `ok` (and `.home` from a Tailscale client); issue a
   probe device [Mac]: `bin/kamal accessory exec sync --reuse "bin/rails sync:device:issue
   EMAIL=cutover-probe@tinkerex-sync.test"` and `curl -H "Authorization: Bearer <token>"

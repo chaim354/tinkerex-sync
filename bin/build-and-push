@@ -40,8 +40,8 @@ IMAGE="$REPO:latest"
 # A SHA TAG ALONE CANNOT ANSWER THAT (full argument in bin/build-boxes-sidecar over in the maker
 # repo): the OCI distribution API has no digest->tag reverse lookup, and `kamal accessory details`
 # shells out to `docker ps`, which prints the RUN REFERENCE -- `:latest` -- never a digest. The
-# label rides inside the image itself, so it survives tag GC or a moved `:latest`; the `$REVISION`
-# tag below is registry inventory alongside it, not a substitute for it.
+# label rides inside the image itself, so it survives tag GC or a moved `:latest`; the
+# `$REVISION-$SYNC_IMPL` tag below is registry inventory alongside it, not a substitute for it.
 #
 # DO NOT SPELL THIS `git describe --dirty`. `--dirty` only consults TRACKED files, and this
 # Dockerfile's final stage does `COPY . .` from the working tree (build context = repo root, not a
@@ -54,13 +54,6 @@ if [ -n "$(git status --porcelain)" ]; then
   REVISION="$REVISION-dirty"
 fi
 
-echo "$KAMAL_REGISTRY_PASSWORD" | docker login ghcr.io -u chaim354 --password-stdin
-
-# THE UNRAID BOX IS amd64; THIS DEV MACHINE MAY NOT BE (Apple Silicon is arm64). A plain
-# `docker build` tags and pushes an arm64 image just as happily as an amd64 one -- it does not
-# fail here, it fails on the box as an exec-format error, far from this line. --platform forces
-# the target explicitly; buildx cross-builds via QEMU emulation when the host arch differs,
-# matching config/deploy.yml's own `builder: arch: amd64` for this same app.
 # WHICH IMPLEMENTATION: the Ruby host (./Dockerfile, the default until the cutover plan's §9
 # retires it) or the Rust server (./Dockerfile.rust). Same registry, same `:latest`, same revision
 # label -- the accessory that pulls `:latest` cannot tell them apart, which is the whole cutover
@@ -77,12 +70,30 @@ case "$SYNC_IMPL" in
   *) echo "SYNC_IMPL must be ruby or rust, not '${SYNC_IMPL}'" >&2; exit 2 ;;
 esac
 
+# `:latest` IS PUSHED ONLY WHEN SYNC_PUSH_LATEST IS 1 (unset = 1). Exactly `0` or `1`: anything else
+# is refused rather than read as "yes", because a typo such as `SYNC_PUSH_LATEST=no` would otherwise
+# move `:latest` -- the dangerous direction (the tagging comment below says why it is dangerous).
+PUSH_LATEST="${SYNC_PUSH_LATEST:-1}"
+case "$PUSH_LATEST" in
+  0|1) ;;
+  *) echo "SYNC_PUSH_LATEST must be 0 or 1, not '${PUSH_LATEST}'" >&2; exit 2 ;;
+esac
+
+# Inputs are validated above, BEFORE the registry login: a refused build must have done nothing.
+echo "$KAMAL_REGISTRY_PASSWORD" | docker login ghcr.io -u chaim354 --password-stdin
+
+# THE UNRAID BOX IS amd64; THIS DEV MACHINE MAY NOT BE (Apple Silicon is arm64). A plain
+# `docker build` tags and pushes an arm64 image just as happily as an amd64 one -- it does not
+# fail here, it fails on the box as an exec-format error, far from this line. --platform forces
+# the target explicitly; buildx cross-builds via QEMU emulation when the host arch differs,
+# matching config/deploy.yml's own `builder: arch: amd64` for this same app.
+
 # TWO TAGS, AND ONLY ONE OF THEM IS ALLOWED TO MOVE `:latest`.
 #
 # The revision tag carries the implementation -- `:<sha>-ruby`, `:<sha>-rust` -- because a Ruby
 # build and a Rust build of the SAME commit are two different images, and until this suffix they
 # overwrote each other's `:<sha>` tag. And `:latest` is pushed only when SYNC_PUSH_LATEST is not
-# `0`, because `:latest` is what the maker app's `sync` accessory pulls on its next
+# `0` (validated above), because `:latest` is what the maker app's `sync` accessory pulls on its next
 # `kamal accessory reboot sync`: with every build moving it, the Rust image could not be pushed for
 # a rehearsal without also ARMING the next reboot to cut over (cutover plan §0.3.3). So:
 #
@@ -94,10 +105,7 @@ esac
 # The default is unchanged -- `:latest` moves, as it always has -- so existing use is untouched.
 REVISION_IMAGE="$REPO:$REVISION-$SYNC_IMPL"
 TAGS=(-t "$REVISION_IMAGE")
-PUSH_LATEST=1
-if [ "${SYNC_PUSH_LATEST:-1}" = "0" ]; then
-  PUSH_LATEST=0
-else
+if [ "$PUSH_LATEST" = "1" ]; then
   TAGS+=(-t "$IMAGE")
 fi
 

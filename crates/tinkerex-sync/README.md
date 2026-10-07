@@ -96,6 +96,12 @@ TEST_S3_ENDPOINT=http://127.0.0.1:8333 TEST_S3_BUCKET=b \
   TEST_S3_ACCESS_KEY_ID=… TEST_S3_SECRET_ACCESS_KEY=… cargo test --test s3_roundtrip
 ```
 
+Measured 2026-09-30 on the development box: `bin/conformance-rust` reports
+`18 runs, 284 assertions, 0 failures, 0 errors, 0 skips` on SQLite and the same on Postgres 16 —
+the figure the Ruby host reports on a fresh database; the whole `cargo test` suite passes on
+Postgres; and `s3_roundtrip` passes against a SeaweedFS 4.48 binary (store verbs, presigned PUT
+and GET, a commit whose finalize verifies against the bucket).
+
 The image, built for the box's platform and smoke-tested locally, **without pushing** (the cutover
 plan's §2.1). `sqlite3` must be present: the maker repo's backup and restore run it inside this
 image (`Dockerfile.rust` says where).
@@ -114,20 +120,17 @@ docker exec rust-smoke tinkerex-sync doctor
 docker rm -f rust-smoke
 ```
 
-Measured 2026-09-30 on the development box: `bin/conformance-rust` reports
-`18 runs, 284 assertions, 0 failures, 0 errors, 0 skips` on SQLite and the same on Postgres 16 —
-the figure the Ruby host reports on a fresh database; the whole `cargo test` suite passes on
-Postgres; and `s3_roundtrip` passes against a SeaweedFS 4.48 binary (store verbs, presigned PUT
-and GET, a commit whose finalize verifies against the bucket).
 
 ## The image
 
 `Dockerfile.rust` (`SYNC_IMPL=rust bin/build-and-push`) keeps the Ruby image's paths, port, uid and
 entrypoint guard, and installs `sqlite3` beside `curl` because the maker repo's backup and restore
 run it inside the deployment's image. **Measured 2026-10-07**, first build, `linux/amd64` on an
-Apple-silicon Docker Desktop via the smoke above: **168 MB** loaded on the Unraid box, where the
-Ruby image it replaces lists at **398 MB** (`docker images` on the same daemon; Docker Desktop's
-own listing shows the Rust image as 44 MB, its compressed size). `tinkerex-sync 0.1.0`, sqlite3
+Apple-silicon Docker Desktop by the smoke above, then loaded onto the Unraid box with
+`docker save | ssh … docker load`: **168 MB** there, where the Ruby image it replaces lists at
+**398 MB** (`docker images` on the same daemon — the like-for-like pair; the root README's 422 MB
+for the Ruby image was measured on another daemon, and Docker Desktop lists the Rust image at
+44 MB, its compressed size). `tinkerex-sync 0.1.0`, sqlite3
 3.40.1, the entrypoint's `migrate` printed `Created`, `/up` answered `ok`, `stats --brief`
 `0 nodes, 0 versions`.
 

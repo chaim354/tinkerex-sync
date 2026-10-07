@@ -30,7 +30,6 @@ class BuildAndPushTest < ActiveSupport::TestCase
     assert_equal 1, tags.size, "exactly one tag, got #{tags.inspect}"
     assert_match REVISION_TAG, tags.first
     assert tags.first.end_with?("-rust"), tags.first
-    refute_includes tags, "#{REPO}:latest"
     assert_match(/left #{Regexp.escape(REPO)}:latest untouched/, out)
     assert_match(/imagetools create -t #{Regexp.escape(REPO)}:latest #{Regexp.escape(tags.first)}/, out,
                  "the promote command is printed, naming the tag just pushed")
@@ -63,12 +62,21 @@ class BuildAndPushTest < ActiveSupport::TestCase
     refute_includes calls.join("\n"), STUB_TOKEN, "the token must not appear in any docker argv"
   end
 
-  test "an unknown SYNC_IMPL is refused by name before anything is built" do
-    out, status, build, = run_script("SYNC_IMPL" => "python")
+  test "an unknown SYNC_IMPL is refused by name before docker is touched at all" do
+    out, status, _build, calls = run_script("SYNC_IMPL" => "python")
 
     assert_equal 2, status.exitstatus, out
     assert_includes out, "python"
-    assert_nil build, "nothing may be built for an unknown implementation"
+    assert_empty calls, "a refused build must not even log in: #{calls.inspect}"
+  end
+
+  test "SYNC_PUSH_LATEST other than 0 or 1 is refused rather than read as yes" do
+    # The dangerous direction is moving `:latest` by accident; `SYNC_PUSH_LATEST=no` must not do it.
+    out, status, _build, calls = run_script("SYNC_IMPL" => "rust", "SYNC_PUSH_LATEST" => "no")
+
+    assert_equal 2, status.exitstatus, out
+    assert_includes out, "SYNC_PUSH_LATEST must be 0 or 1, not 'no'"
+    assert_empty calls, "a refused build must not even log in: #{calls.inspect}"
   end
 
   private

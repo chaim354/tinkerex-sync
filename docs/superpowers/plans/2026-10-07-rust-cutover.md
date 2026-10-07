@@ -61,8 +61,8 @@ The rewrite plan's phases 0–3, §6 and §8 are checked off with measurements. 
    inside the deployment's own image.** `ops/backup-db.sh` runs its worker as
    `docker run --rm --user 0 -v "$src:/src" "$image" sh -c "$WORKER"` where `$image` is the
    running `tinkerex-sync` container's image and the worker calls `sqlite3 .backup` and
-   `PRAGMA integrity_check`; `bin/restore-db`'s extraction helper and its `--into` verify do the
-   same. `Dockerfile.rust` installs only `ca-certificates curl`; the Ruby `Dockerfile` installs
+   `PRAGMA integrity_check`; `bin/restore-db`'s `--into` verify does the same, and a real restore
+   runs `bin/backup-db` first. `Dockerfile.rust` installs only `ca-certificates curl`; the Ruby `Dockerfile` installs
    `curl libjemalloc2 sqlite3`. **Cut over without fixing this and the nightly `sync` backup fails
    every night from the first one, and `bin/restore-db sync` cannot restore.** The rewrite plan's
    §8.3 said "`ops/backup-db.sh` needs nothing (it reads the volume with its own sqlite3)"; that
@@ -284,7 +284,7 @@ echo "running Ruby revision: ${R:-<none>}"
   ```sh
   echo "$(bin/secret KAMAL_REGISTRY_PASSWORD 'op://tinkerex/ghcr.io/password')" | docker login ghcr.io -u chaim354 --password-stdin
   docker manifest inspect ghcr.io/chaim354/tinkerex-sync:$R >/dev/null          # or :$R-ruby after §2.1
-  docker buildx imagetools create -t ghcr.io/chaim354/tinkerex-sync:ruby-$R ghcr.io/chaim354/tinkerex-sync:$R
+  docker buildx imagetools create -t ghcr.io/chaim354/tinkerex-sync:ruby-$R ghcr.io/chaim354/tinkerex-sync:$R   # or :$R-ruby, if R was built after §2.1
   docker manifest inspect ghcr.io/chaim354/tinkerex-sync:ruby-$R | head -5
   ```
 

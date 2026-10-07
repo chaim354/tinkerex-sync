@@ -336,7 +336,8 @@ that file against the Rust binary with `0 skips`, run from the repo root with
   OCI revision label as `bin/build-and-push` sets it. Measured size recorded in the README beside
   the Ruby image's 422 MB.
   **2026-09-30:** `Dockerfile.rust` + `bin/docker-entrypoint-rust`; `SYNC_IMPL=rust bin/build-and-push`
-  selects it (same tags and revision label as the Ruby image). **Written, not built** — the
+  selects it (same tags and revision label as the Ruby image — tags since 2026-10-07: `:<sha>-ruby` /
+  `:<sha>-rust`, cutover plan §2.1). **Written, not built** — the
   development box has no Docker; the first build on the Mac measures the size and fills the README.
 - [x] **3.10 CI.** New jobs in `.github/workflows/ci.yml`: `rust-check` (fmt, clippy, deny,
   `cargo test`), `conformance-rust` (build, `migrate`, `device issue`, `serve` on 3004 with

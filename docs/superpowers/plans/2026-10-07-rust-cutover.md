@@ -98,6 +98,68 @@ The rewrite plan's phases 0–3, §6 and §8 are checked off with measurements. 
   `ssh kamal1@192.168.1.95`; **[checkout]** run in a sibling checkout of the three repos. An
   agent without box access does the PR work and hands the operator the exact commands.
 
+### 0.5 Progress — what has run (append here; the rewrite plan's §7 holds the checkboxes)
+
+**2026-10-07, from the operator's Mac** (Docker Desktop with an amd64 buildx builder, cargo 1.99.0,
+ssh to the box, 1Password service account), the day this plan merged:
+
+- **Blocker, found first: the ghcr token is dead.** `op://tinkerex/ghcr.io/password` — a classic
+  `ghp_` PAT, item last updated 2026-06-16 — gets **401** from `api.github.com/user` and `denied`
+  from `ghcr.io/v2/`; the box's stored docker credential is the same token and `docker manifest
+  inspect` fails there too. `bin/secrets-preflight` reports it `ok` because it checks that a secret
+  RESOLVES, not that it works. Every registry step waits on a new PAT (`write:packages`,
+  `read:packages`) in that item: §2.3's ghcr pin, §2.4's push, and **every `kamal accessory
+  reboot`** — `reboot` is `prepare` (registry login) → pull → stop → remove → boot, so it fails
+  before anything is stopped: safe, but failed. The last recorded deploys were ~2026-09-08; a
+  90-day PAT minted 2026-06-16 expired ~2026-09-14.
+- **§2.1 prep PR: this branch** (`claude/cutover-prep`). Gates on the Mac: fmt, clippy, deny green;
+  `cargo test` green; `bin/conformance-rust` `18 runs, 284 assertions, 0 failures, 0 errors, 0
+  skips`; rustc 1.99.0. Image built `linux/amd64` without pushing: **168 MB** loaded on the box
+  (the Ruby image there: 398 MB; Docker Desktop lists the Rust image at 44 MB, compressed),
+  `tinkerex-sync 0.1.0`, sqlite3 3.40.1, `Created`, `/up` → `ok`, `0 nodes, 0 versions`, `doctor`
+  clean. It is on the box as `tinkerex-sync:rust-local` (image id `fd3004b481a5`) via
+  `docker save | ssh … docker load` — the registry was never involved.
+- **§2.2 device door PR: `claude/sync-device-door` in the maker repo.** Not deployed (needs the
+  merge and the token). Publishing, measured: `*.tinkerex.home` ALREADY resolves to the NPM front
+  proxy at 192.168.1.7 (a wildcard — `sync.tinkerex.home` resolved before anything registered it),
+  and NPM forwards only NAMED hosts (it answered its own 404 page for `sync.tinkerex.home`), so the
+  one outside step is an NPM proxy host for that name → `http://192.168.1.95:80`; `.local` is a
+  line in each client's `/etc/hosts`.
+- **§2.3: `R = 4148fcd68ef16bb29f536ced13cd56c0a5237975`**, running since 2026-08-25T02:29Z, image
+  id `9115fae48a02`, description label blank (built before the label existed). **Pinned ON THE BOX**
+  as `ghcr.io/chaim354/tinkerex-sync:ruby-4148fcd6…` — a local tag, so a later `:latest` pull cannot
+  leave the Ruby image dangling for a prune; the ghcr pin waits on the token. **D2 as taken:** the
+  Ruby side of `main` differs from `R` by exactly one commit (`5d600bf`, the numeric `expires_at`
+  fix — `git log 4148fcd..main -- app lib host Dockerfile …`), so the running image is the better
+  rollback target than a fresh build: rolling back lands on exactly what runs today. The reboot
+  path gets rehearsed by the device-door deploy, which pulls `:latest` (still Ruby). A Ruby→Ruby
+  reboot onto `main` remains the operator's option; nothing here precludes it.
+- **§2.4: not run** (token).
+- **§3, the rehearsal: RUN**, with the branch-built Rust image and the running Ruby image, both
+  local on the box. Archive `tinkerex-sync-20261007T160805Z.tar.gz` (7977 bytes; `integrity_check
+  ok — 7 nodes, 3 versions`; 5 users; 3 files in the chunk store). Restored into
+  `tinkerex_sync_storage-rehearsal`, `nodes readable … as 1000:1000: 7`. **Rust pass:** `Adopted`,
+  `doctor` clean (admin route enabled), `7 nodes, 3 versions`, `/up` ok. Real user (id 3): whoami
+  200; `/v1/tree` 2 nodes == `SELECT count(*) FROM nodes WHERE user_id=3 AND deleted=0` → 2.
+  Hydration of that user's chunk `d6d45e31…`: `POST /v1/chunks/download` 200, presigned URL on the
+  request's own base (`/v1/chunks/blob/3/…`), `GET` 200, 93 bytes, **sha256 equals the hash**.
+  Whole corpus with a fresh user: `18 runs, 284 assertions, 0 failures, 0 errors, 0 skips`; after:
+  `41 nodes, 38 versions`. **Ruby pass** (`ruby-4148fcd6…`) on the same volume: boots; `bin/rails
+  runner` → `41 nodes, 38 versions`; the Rust-issued corpus token: whoami 200 and `/v1/tree` lists
+  the 28 nodes the Rust pass created (`Alpha`, `Beta`, `Docs`, `EdgeDir`, `TenancyDir`, …); the real
+  user's Rust-issued token: 200, the same 2 nodes; corpus minus 11/14 with a Ruby-issued user:
+  `14 runs, 231 assertions, 1 failure` — `15-share-links-edge.yml / create a link with a numeric
+  expires_at: expected nil, got 12345`, which IS `5d600bf`'s fix and absent from `R` by construction
+  (production answers the same today); after: `71 nodes, 72 versions`. **Rust again:** `Adopted`,
+  `71 nodes, 72 versions`, the Ruby-issued token: whoami 200, 27 nodes. Torn down (§3.4).
+  *A first attempt was discarded:* a corpus device issued `--name corpus` fails the four lock
+  assertions that expect the default name `device`; the volume was re-restored from the same
+  archive before the clean run. **Issue corpus devices with the default name.**
+- **Not run:** §2.2's deploy and probes, §2.4, §4–§6. **Next, in order:** a new PAT in the
+  1Password item → merge both PRs → §2.3's ghcr pin (`imagetools create … ruby-$R` from the box's
+  local image is NOT possible; pin from the registry's own `:$R` or `:latest` digest) → §2.2's
+  deploy → §2.4's push from `main` → §4.
+
 ---
 
 ## 1. Decisions for the operator (settle before Phase A)

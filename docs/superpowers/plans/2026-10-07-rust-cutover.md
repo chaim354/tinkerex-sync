@@ -134,7 +134,15 @@ ssh to the box, 1Password service account), the day this plan merged:
   rollback target than a fresh build: rolling back lands on exactly what runs today. The reboot
   path gets rehearsed by the device-door deploy, which pulls `:latest` (still Ruby). A Ruby→Ruby
   reboot onto `main` remains the operator's option; nothing here precludes it.
-- **§2.4: not run** (token).
+- **Later the same day the operator renewed the PAT** (classic; `write:packages` among much
+  broader scopes, no expiry): `api.github.com` 200, ghcr issues a pull/push token for this repo,
+  `docker login` succeeds. **§2.3 completed in ghcr:** `:4148fcd6…` and `:latest` both resolve to
+  manifest `sha256:9115fae48a02…`, which is the running container's own RepoDigest, so the running
+  image IS the registry's `:latest`; `ruby-4148fcd68ef16bb29f536ced13cd56c0a5237975` now points at
+  that digest too (`imagetools create`, verified by inspect). The rollback target exists in the
+  registry and on the box, and is byte-identical to what runs.
+- **§2.4: not run** — waits on this PR merging (the tagging fix is on this branch), then
+  `SYNC_PUSH_LATEST=0 SYNC_IMPL=rust bin/build-and-push` from `main`.
 - **§3, the rehearsal: RUN**, with the branch-built Rust image and the running Ruby image, both
   local on the box. Archive `tinkerex-sync-20261007T160805Z.tar.gz` (7977 bytes; `integrity_check
   ok — 7 nodes, 3 versions`; 5 users; 3 files in the chunk store). Restored into
@@ -155,10 +163,9 @@ ssh to the box, 1Password service account), the day this plan merged:
   *A first attempt was discarded:* a corpus device issued `--name corpus` fails the four lock
   assertions that expect the default name `device`; the volume was re-restored from the same
   archive before the clean run. **Issue corpus devices with the default name.**
-- **Not run:** §2.2's deploy and probes, §2.4, §4–§6. **Next, in order:** a new PAT in the
-  1Password item → merge both PRs → §2.3's ghcr pin (`imagetools create … ruby-$R` from the box's
-  local image is NOT possible; pin from the registry's own `:$R` or `:latest` digest) → §2.2's
-  deploy → §2.4's push from `main` → §4.
+- **Not run:** §2.2's deploy and probes, §2.4, §4–§6. **Next, in order:** merge both PRs →
+  §2.2's deploy (`bin/kamal accessory reboot sync` pulls `:latest`, still the running Ruby image,
+  so the only change is the proxy registration) and its probes → §2.4's push from `main` → §4.
 
 ---
 

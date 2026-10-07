@@ -411,6 +411,13 @@ Pre-conditions: Phase 2's three-way corpus gate, Phase 3 complete, `../tinkerex`
 suites green against it (§8.2), `bin/build-and-push` published and the image's revision label read
 back from a `docker inspect`.
 
+> **Executed per `2026-10-07-rust-cutover.md`** (written the day #16 merged), which found three
+> things this section assumed wrongly: the Rust image lacks the `sqlite3` the maker repo's backup
+> and restore scripts run inside the deployment image (§8.3's claim below is corrected there); no
+> device can reach the internal-only accessory today, so 7.3's device probes need a door first; and
+> `bin/build-and-push` moves `:latest` on every build, so a rehearsal image needs a revision-only
+> push. Each step here keeps its box; the figures land here when that plan's phases run.
+
 - [ ] **7.1 Rehearse rollback first, off the box.** Restore a fresh `bin/backup-db sync` archive
   into a throwaway volume (`bin/restore-db sync <archive> --into rehearsal --yes`), run the
   Rust image against it, run corpus files 02–10 with a fresh user, stop it, boot the **Ruby**
@@ -453,8 +460,11 @@ Record the arc in the Kaneo record via the maker repo's `bin/log`, as every arc 
   Rust binary and record the counts in that repo's CLAUDE.md §5 table, which currently says these
   run against `tinkerex-sync` — a claim this plan found false.
 - [x] **8.3 `tinkerex`: `bin/restore-db`** — the `sync` arm's `bin/rails runner 'puts …'` becomes
-  `docker exec … tinkerex-sync stats`; `ops/backup-db.sh` needs nothing (it reads the volume with
-  its own sqlite3). `test/bin_sync_server_test.rb` there covers the script change.
+  `docker exec … tinkerex-sync stats`; ~~`ops/backup-db.sh` needs nothing (it reads the volume with
+  its own sqlite3)~~ — **wrong, found 2026-10-07:** it runs `sqlite3` inside the *deployment's own
+  image* (`docker run … "$image" sh -c "$WORKER"`), as do `bin/restore-db`'s helper and its
+  `--into` verify, and `Dockerfile.rust` installs no `sqlite3`. The cutover plan's §2.1 adds it
+  before the image is ever built. `test/bin_sync_server_test.rb` there covers the script change.
   **2026-09-30 (same maker branch as 8.1):** the arm probes the container for the binary and reads
   `stats --brief`, falling back to `bin/rails runner` on the Ruby image, so a rolled-back container
   verifies the same way as a rolled-forward one. Shell, not unit-tested — it is an ssh + docker exec

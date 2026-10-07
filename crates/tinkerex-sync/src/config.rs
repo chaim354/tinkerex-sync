@@ -52,7 +52,7 @@ pub struct Config {
 pub struct ConfigError(pub String);
 
 fn present(v: Option<String>) -> Option<String> {
-    v.and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    v.filter(|s| !s.trim().is_empty())
 }
 
 impl DatabaseConfig {

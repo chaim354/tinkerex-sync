@@ -434,7 +434,9 @@ back from a `docker inspect`.
   and absent from `R` by construction — then `71 nodes, 72 versions`; Rust again `Adopted`,
   `71 nodes, 72 versions`, reads Ruby's rows with Ruby's token (200). A Ruby-written chunk hydrated
   through Rust: sha256 of the bytes equals the hash. Full figures: cutover plan §0.5.
-- [ ] **7.2 Backup the live accessory** (`bin/backup-db sync`), verify the archive's counts.
+- [x] **7.2 Backup the live accessory** (`bin/backup-db sync`), verify the archive's counts.
+  **2026-10-07 18:07 UTC:** `tinkerex-sync-20261007T180753Z.tar.gz`, `integrity_check ok`, 7 nodes;
+  live `7 nodes, 3 versions` by `bin/rails runner` on the Ruby host.
 - [ ] **7.3 Swap.** Retag: `:latest` → the Rust revision; `bin/kamal accessory reboot sync` from the
   maker repo (its `deploy.yml` is unchanged). Probes, in order: `/up` 200; `whoami` with an
   **existing** maker user's token (`users.sync_device_token` there — proves token compatibility on
@@ -443,6 +445,23 @@ back from a `docker inspect`.
   (`nudge:` lines absent, a pull triggered within a second of a commit). **This is the first time the
   deployed client's nudge works at all** (§0.2: the Ruby host refused its Origin-less connection), so
   the before-state is polling latency, and the cutover PR must say so.
+  **2026-10-07, in two attempts.** The first retag of `:latest` (`imagetools create`) read back as
+  the Rust digest for about a minute and then reverted at the registry's origin; the `reboot` that
+  pulled inside that window re-created the RUBY container (blank description label, `Booting Puma`)
+  while reporting success — caught by the first probe. A fresh `SYNC_IMPL=rust bin/build-and-push`
+  with `:latest` enabled pushed a new index (`9409d6ce…`, tag `:38931307…-rust`, the same binary)
+  that persisted at the origin; `docker pull` ON THE BOX confirmed `Downloaded newer image` before
+  the second `reboot` (7 s, 18:22:47–54 UTC). Probes, in order: `tinkerex-sync (rust)` /
+  `38931307…`; `Adopted`, listening; `/up` ok, `13 nodes, 4 versions` (7/3 plus the day's probe
+  traffic), `doctor` clean; the maker app's journey through its own port (mkdir, two-phase upload,
+  rename, read, delete, restore, read, cascading delete) `JOURNEY OK`, sha256 matching twice;
+  `RemoteChangelogPullJob` ran at :24, zero `FileLayer::FetchError`; admin door 409 `email_taken`
+  for an existing email, 401 for a wrong token; the Ruby-issued probe device's token `whoami` 200
+  through the door; an Origin-less `/cable` upgrade through kamal-proxy **101** (Ruby: 404);
+  **the nudge arrives in 6.6 / 5.2 / 8.0 ms** over three runs of the client's `nudge` example
+  (Ruby, minutes earlier: `404 Not Found` on connect, no nudge, `Disconnected`, the 2 s poll);
+  share link: create 201, anonymous redeem 200, download POST 200, presigned GET byte-exact.
+  In-flight blob URLs: not run (none minted before the swap). Deploy record tinkerex#328.
 - [ ] **7.4 Watch for one week** with the scheduler **off**. Then `gc reap-pending --dry-run` and
   `gc reap-storage --dry-run` against production, read the lists, and only then enable
   `--scheduler` (retention stays `keep_all`; it prunes nothing and sweeps nothing).

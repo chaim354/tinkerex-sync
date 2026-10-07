@@ -189,9 +189,28 @@ ssh to the box, 1Password service account), the day this plan merged:
   *A first attempt was discarded:* a corpus device issued `--name corpus` fails the four lock
   assertions that expect the default name `device`; the volume was re-restored from the same
   archive before the clean run. **Issue corpus devices with the default name.**
-- **Not run:** §4–§6. **Next: §4, at a quiet hour the operator picks.** `RUST` is the tag above;
-  `R` is `4148fcd6…`, pinned as `ruby-$R`; the box already holds both images, so the swap's pull
-  is instant and its downtime is the container stop/start.
+- **§4 DONE, 2026-10-07 18:22 UTC — in two attempts, and the first is the lesson.** §4.1: archive
+  `tinkerex-sync-20261007T180753Z.tar.gz` (`integrity_check ok`, 7 nodes), live `7 nodes, 3
+  versions`. §4.2, first attempt: `imagetools create -t :latest :298c065a…-rust` reported done and
+  `imagetools inspect` read the Rust digest back from the Mac; `bin/kamal accessory reboot sync`
+  (11 s, no error) pulled `:latest` seven seconds later and **re-created the Ruby container** —
+  probe 1 showed a blank description label, revision `4148fcd6…`, `Booting Puma`, no
+  `tinkerex-sync` binary. Within minutes `HEAD /v2/…/manifests/latest` at the origin and the
+  Packages API both showed the OLD digest again; a brand-new diagnostic tag onto the Rust index
+  (`rust-current`) and a plain `docker tag`/`docker push :latest` were likewise acknowledged and
+  then absent, while `ruby-$R` onto the August index had persisted. GitHub status: Packages
+  operational. **What persisted: a fresh `SYNC_IMPL=rust bin/build-and-push` with `:latest`
+  enabled** — a new index `sha256:9409d6ce2e7030d80bc4714a07bd586f1820083e0fbe0d76de418eb7943c65d5`
+  tagged `:38931307545918c53dedac3112a920c76c0e8293-rust` and `:latest` (same binary; `main` had
+  moved to the plan-only #19). Verified 45 s at the origin, then **`docker pull` ON THE BOX:
+  `Downloaded newer image`** — the check §4.2 was missing. Second `reboot`: 7 s, 18:22:47–54.
+  Probes 1–8 all green (figures in the rewrite plan §7.3); probe 9 not run. The maker app saw zero
+  `FileLayer::FetchError` across both reboots. Deploy record tinkerex#328. The `:298c065a…-rust`
+  tag still resolves and is the same source tree minus a plan file.
+- **Not run:** §5 (the watch week, starting now — the first nightly `sync` backup at 03:30
+  America/New_York on 2026-10-08 is the real test of §2.1's `sqlite3`; check `bin/backup-status`
+  first thing), §6 (not needed so far). **Rollback stays:** `ruby-$R` resolves at the origin and sits
+  on the box; use a fresh push if a retag does not persist, and verify the pull on the box first.
 
 ---
 
@@ -472,6 +491,12 @@ Record the counts: they are what `stats --brief` must print after the swap.
 ```sh
 docker buildx imagetools create -t ghcr.io/chaim354/tinkerex-sync:latest $RUST     # $RUST from §2.4
 docker manifest inspect ghcr.io/chaim354/tinkerex-sync:latest | head -5             # digest == $RUST's
+# THEN VERIFY ON THE BOX, NOT FROM THE MAC (measured 2026-10-07, §0.5): a retag read back from the
+# Mac for a minute and then reverted at the registry's origin, and the reboot inside that window
+# pulled the OLD image and reported success. `docker pull` here must print $RUST's digest and
+# "Downloaded newer image"; if the registry keeps reverting, push a fresh index with the tag
+# attached instead (`SYNC_IMPL=rust bin/build-and-push`, :latest enabled) — that persisted.
+ssh kamal1@192.168.1.95 'docker pull ghcr.io/chaim354/tinkerex-sync:latest | grep -E "^Digest|^Status"'
 bin/kamal accessory reboot sync            # pull_image, stop, remove_container, boot (kamal 2.12 cli/accessory.rb)
 ```
 
@@ -638,4 +663,7 @@ The rewrite plan's §8 entries are the model: the figure, the date, the box, and
   writes; the maker app and one daemon are far below where that matters, but §5.2 watches for it.
 - **Tag discipline.** Every image reference in this plan is a revision tag or the pinned
   `ruby-$R`; `:latest` is only ever *written* by §4.2 and §6, never read to find out what runs.
-  The running container's labels are the only answer to "what is deployed".
+  The running container's labels are the only answer to "what is deployed" — and on 2026-10-07
+  they were the ONLY thing that caught a reboot which had redeployed the old image (§0.5): a
+  moved tag can read back from one client and not be what the box pulls. Verify the pull on the
+  box, then the labels, every time.

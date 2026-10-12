@@ -118,6 +118,11 @@ jobs:
             echo "::error::could not parse a device_token out of sync:device:issue's output"
             exit 1
           fi
+          # MASKED BEFORE IT REACHES $GITHUB_ENV, because every later step's log header prints the
+          # env that file sets -- that is where this token appeared in clear. It authenticates only
+          # the throwaway 127.0.0.1 server below, but run logs are readable by anyone once the
+          # repository is public, and a mask is cheaper than an argument about what a token is worth.
+          echo "::add-mask::$DEVICE_TOKEN"
 
           # STORAGE_BACKEND=local, no RAILS_ENV -- matching bin/conformance-record's own usage
           # comment exactly. Backgrounded and detached from this step's own shell so it stays up

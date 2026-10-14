@@ -1,178 +1,156 @@
 # tinkerex-sync
 
-A local-first file sync engine, which production has run as the Rust binary under
-`crates/tinkerex-sync` since 2026-10-07 (see [its README](crates/tinkerex-sync/README.md)). The
-mountable Rails engine and `host/` app described below are the retiring implementation, kept as the
-rollback target until Phase 6 of `docs/superpowers/plans/2026-09-30-rust-rewrite.md` deletes them.
+The tinkerex sync server: one Rust binary, `tinkerex-sync`, built from `crates/tinkerex-sync`
+([its README](crates/tinkerex-sync/README.md) has the full environment table, the storage
+conventions and the gates). Production has run it since 2026-10-07; the Rails engine and host app
+it replaced were deleted from this repository in Phase 6 (2026-10-14), and `git show 36bb82e:<path>`
+reads them.
 
-Files are split into content-defined chunks (FastCDC), content-addressed and deduped. A commit is
-an immutable version pointing at a chunk manifest; devices converge by pulling a per-user
-changelog. **Chunk bytes move client-to-storage over presigned URLs and never through Rails** —
-the engine is a control plane and a URL signer, not a data path.
+Clients split files into content-defined chunks (FastCDC), content-addressed and deduped. A commit
+is an immutable version pointing at a chunk manifest; devices converge by pulling a per-user
+changelog. **Chunk bytes move client-to-storage over presigned URLs and never through the server**
+— it is a control plane and a URL signer, not a data path — with one sanctioned exception: the
+`local` store's own signed blob endpoints, which are the storage when there is no bucket.
 
-MIT licensed.
+MIT licensed. Every dependency is permissive (MIT/Apache/BSD), checked by `cargo deny`.
 
-## What the host must supply
+## The binary
 
-The engine deliberately does not define a tenant, a catalog or a credential — a host that already
-has those should not be made to adopt a second set.
+```sh
+cargo build --release -p tinkerex-sync           # target/release/tinkerex-sync
 
-| Obligation | What it is |
+tinkerex-sync serve [--bind 0.0.0.0] [--port 3000] [--migrate] [--scheduler]
+tinkerex-sync migrate                            # create the schema, or adopt an existing one
+tinkerex-sync device issue --email a@b.c [--name device]   # user_id:/device_id:/device_token:, once
+tinkerex-sync device list  --email a@b.c
+tinkerex-sync stats [--brief]                    # row counts; --brief prints "<n> nodes, <m> versions"
+tinkerex-sync routes                             # every route it serves, one per line
+tinkerex-sync doctor                             # configuration, schema presence, the Postgres pooler probe
+tinkerex-sync gc retention    [--grace 3600]      [--user N] [--dry-run]
+tinkerex-sync gc reap-pending [--ttl-hours 24]    [--user N] [--dry-run]
+tinkerex-sync gc reap-storage [--grace-hours 24]  [--user N] [--dry-run]
+```
+
+`serve` answers the v1 API — 28 routes — plus `GET /up` (a readiness probe that reads the database)
+and `GET /cable` (the realtime nudge, Action Cable framing). `device issue` prints its token once and
+keeps only a SHA-256 digest: capture it into a file rather than reading it off the terminal; it is 43
+base64url characters, not hex, and a pattern written for hex silently matches nothing. `--scheduler`
+runs reap-pending hourly at :30, retention nightly at 03:15 UTC and reap-storage Sundays at 04:15
+UTC; it is off by default, because the reapers delete bytes — read the `--dry-run`s first.
+
+## Environment
+
+| variable | meaning |
 |---|---|
-| `User`, `Node`, `Device` | `TinkerexSync::HOST_MODELS`. `User` must expose `next_seq!` and, since Arc C's admin provisioning endpoint, `.create!(email:)`/`.exists?(email:)` against a `users.email` column carrying presence + a DB-level unique index. `Device` must expose `.authenticate` and, since the same arc, `.register!(user:, name:)` returning an instance whose `#plaintext_token` answers the one-time-shown token. `Node` must expose `#file?`. Both hosts this gem has ever had (`host/`, `test/dummy`) already carried the email column and `Device.register!` before Arc C existed — this row documents what was already true in practice, not a new constraint on a working host. |
-| `ApplicationRecord`, `ApplicationJob`, `ApplicationCable::Channel` | Every engine class names these explicitly, so `isolate_namespace` cannot misresolve them. |
-| `limits_concurrency` on `ApplicationJob` | Used by `Sync::RetentionJob`. This is **solid_queue's extension, not core ActiveJob** — the gemspec does not depend on solid_queue, because the host picks its own queue adapter. |
-| Routes | `Sync.draw_v1_routes(mapper)`, called inside your own `namespace :v1`. |
-| **Action Cable adapter** | `config/cable.yml`. The engine broadcasts on every commit, mutation and restore — that is how devices learn there is something to pull. With no adapter configured, ActionCable's config is `nil` and the broadcast raises `undefined method 'fetch' for nil` **from inside the commit**, naming neither cable nor configuration. The engine cannot default it: `async` is wrong for more than one process, `redis` needs a server, `solid_cable` needs a database. |
-| **Device enrolment** | The engine draws **no** route for enrolling a sibling device onto an *existing* user — obtaining that kind of token is entirely yours, which is why `Device` is in `HOST_MODELS`. `host/` ships one answer (an operator-minted first token, siblings enrolled by an authenticated device, no password anywhere). The engine **does** draw one provisioning route, `POST /v1/admin/libraries` (`Sync::V1::Admin::LibrariesController`), gated by a distinct `SYNC_ADMIN_TOKEN` operator credential rather than a device token — it creates a *brand-new* User plus its first Device, not a sibling on one that already exists, which is a different enough operation that it lives in the engine rather than needing every host to reimplement it. |
+| `STORAGE_BACKEND` = `local` \| `s3` | required; `memory` is refused |
+| `SECRET_KEY_BASE` | required; the HMAC key of the local blob URLs |
+| `DATABASE_URL` (`postgres://…` or `sqlite:…`), else `SQLITE_DATABASE` | default `storage/production.sqlite3` |
+| `CHUNK_LOCAL_DIR`, `CHUNK_PUBLIC_URL` | the `local` store (default `tmp/chunk-store`; URLs from the request's own host unless set) |
+| `CHUNK_BUCKET`, `CHUNK_ENDPOINT`, `CHUNK_REGION` (default `auto`), `CHUNK_ACCESS_KEY_ID`, `CHUNK_SECRET_ACCESS_KEY` | the `s3` store |
+| `SYNC_ADMIN_TOKEN` | the operator credential for `POST /v1/admin/libraries`; blank = that route answers 503 |
+| `SYNC_VERIFY_FINALIZE` | default on: finalize checks that first-seen chunks really landed |
+| `RETENTION_POLICY` = `keep_all` \| `tiered` | default `keep_all`, which prunes nothing |
+| `SYNC_SCHEDULER=1` | the same as `serve --scheduler` |
+| `SYNC_DB_POOLER_CHECK` = `warn` \| `refuse` \| `skip` | the Postgres statement-mode pooler probe at boot (default `warn`) |
+| `RUST_LOG` (or `RAILS_LOG_LEVEL`), `SYNC_LOG_JSON=1` | logging |
+| `BIND`, `PORT` | `serve`'s address, default `0.0.0.0:3000` |
 
-### What the engine defaults for you
+The names are the ones the Rails host read, so the deployment's env block did not change at the
+cutover.
 
-`config.x.verify_finalize` — read by `Sync::V1::CommitsController#finalize`. Until 2026-08-21 only
-the tinkerex monorepo set it, so every other host got an **empty `OrderedOptions`** (not `nil` —
-`config.x.anything` auto-vivifies, and an empty one is *truthy*) and finalize crashed further in. The
-engine now defaults it in its own railtie; a host initializer still wins.
+## Storage: the two stores and the volume
 
-## `host/` — a standalone sync server
+- **`local`** — the server's own HMAC-signed blob endpoints (`PUT`/`GET
+  /v1/chunks/blob/:user_id/:hash?exp=&sig=`), bytes under `CHUNK_LOCAL_DIR`, 64 MiB per chunk. What
+  production runs: one box, no external object store.
+- **`s3`** — R2, S3 or SeaweedFS through presigned SigV4 URLs, path-style, with a custom endpoint;
+  the bytes never touch the server.
 
-A small, real Rails app: the engine, the three models, device enrolment, and nothing else. It is
-what `chunk_remote` in the tinkerex maker app talks to.
+Either way a chunk's key is `chunks/<user_id>/<hash>`, per user. The database is SQLite or Postgres
+— one SQL layer, the same schema the Rails host used (so a Rails-written database opens as is).
 
-```sh
-cd host
-bin/rails db:prepare
-EMAIL=you@example.com bin/rails sync:device:issue   # prints a device token, once
-STORAGE_BACKEND=local bin/rails server -p 3002
-```
+**The volume holds the library, not a cache.** In the image it is `/rails/host/storage` — the Rails
+image's path, kept so the deployment's volume mounted over it unchanged — and with
+`STORAGE_BACKEND=local` it holds both the SQLite file (`production.sqlite3`) and every chunk byte
+(`chunk-store/`). It must be a real device, not a plain-local docker volume: a missing volume is not
+an error to docker, which silently creates one and reports everything healthy.
 
-Then point a maker app at it:
+## The image
 
-```sh
-LIBRARY_BACKEND=chunk_remote \
-CHUNK_REMOTE_URL=http://127.0.0.1:3002 \
-CHUNK_REMOTE_TOKEN=<the token above> \
-  bin/rails server
-```
+`Dockerfile.rust`, published by `bin/build-and-push` (`linux/amd64`, tags `:<sha>-rust` and
+`:latest`, or the revision tag alone with `SYNC_PUSH_LATEST=0`). **168 MB** on the deployment box,
+where the Ruby image it replaced lists at 398 MB (measured 2026-10-07). It carries `curl` and
+`sqlite3` because the maker repo's backup and restore scripts run them inside it.
 
-**Verified end to end on 2026-08-22**, two processes with separate databases: upload (bytes
-straight to storage, proxied by neither app), finalize, changelog pull, local-SQL `stat`, byte read,
-`download`, `mkdir` and `move` with the `node_id` preserved — with `Sync` **undefined** in the maker
-app's process throughout.
+- **`migrate` runs from the entrypoint, for `serve` only.** The first Ruby deploy came up on an
+  empty volume with no schema: kamal reported success, the proxy reported healthy, and the first
+  command to touch a table said `Could not find table 'users'`. Guarding on the command means
+  `docker exec … tinkerex-sync stats` and one-off `gc` runs never migrate as a side effect.
+- **`/up` reads the database, and has to.** A static 200 answers healthy for a server that cannot
+  serve a single request, which is worse than no probe at all — it tells the proxy to send traffic.
 
-`test/dummy` remains, and is not redundant: it proves the engine boots with **only** the declared
-obligations supplied, which a real host cannot prove because it supplies more. Two apps, two
-questions, and they run in separate processes because two Rails applications cannot boot in one.
+## How the maker app and devices reach it
 
-`Device` staying host-side is deliberate: its token is the only credential the v1 API accepts, so
-an engine that owned it would leave a host's own API unable to authenticate.
+- **The maker app** (`chaim354/tinkerex`, `LIBRARY_BACKEND=chunk_remote`) runs this image as its
+  `sync` Kamal **accessory** — a fixed container name, `tinkerex-sync`, on the kamal network — and
+  reaches it at `CHUNK_REMOTE_URL=http://tinkerex-sync:3000`. Each maker user gets a library of
+  their own, provisioned lazily through `POST /v1/admin/libraries` with `SYNC_ADMIN_TOKEN`. A
+  deploy is `bin/build-and-push` here, then `bin/kamal accessory reboot sync` there (an accessory
+  pulls; it never builds).
+- **Devices** (`chaim354/tinkerex-client`) reach it through that deployment's kamal-proxy, which
+  routes `sync.tinkerex.local` and `sync.tinkerex.home` to it, with a device token — the first from
+  `tinkerex-sync device issue` or the admin route, siblings from `POST /v1/devices` on an enrolled
+  device. They sync directly against it: the maker app is not in their path.
 
-### Routes are drawn, not mounted
+The wire is specified in `docs/sync-protocol.md` in the maker repo.
 
-There is no `mount Sync::Engine`. The engine's paths interleave with a host's own inside one `v1`
-namespace, and a mount owns a whole prefix — introducing a `/v1/sync/` prefix to make one possible
-would break every deployed client. So the host calls the drawer:
+## The conformance corpus
 
-```ruby
-namespace :v1 do
-  # ...your own routes...
-  Sync.draw_v1_routes(self)
-end
-```
-
-The drawer lives in `lib/`, not `config/routes.rb`, because `Rails::Engine` evaluates that path
-itself whether or not the engine is mounted — putting it there loads it twice.
-
-### Capabilities
-
-`Sync.capability_available?` / `Sync.capability_unavailable_message` default to **available,
-always** — the correct answer for a bare mount, since this engine *is* the sync engine. A host that
-can be configured with a non-versioned backend overrides them to gate the relevant endpoints (501).
-
-## Schema
-
-`db/engine_schema.rb` is one consolidated migration creating the eight tables the engine owns:
-`changelog_entries`, `chunks`, `conflicts`, `file_locks`, `manifest_chunks`, `pending_commits`,
-`share_links`, `versions`. Its eight `add_foreign_key` lines all name the host's `users` table.
-
-## Tests
+`conformance/` holds sixteen scenario files of recorded HTTP exchanges — authored requests, real
+responses — and `test/conformance_test.rb` replays them against a running server. The grader is
+Ruby on purpose: one written by the same hands as the server would share its assumptions
+([conformance/README.md](conformance/README.md) says why, and is the format's authority).
 
 ```sh
 bundle install
+bin/conformance       # builds, boots on a fresh database on 127.0.0.1:3004, runs the corpus
+```
+
+Measured 2026-10-14, the binary alone with the Ruby gone:
+
+```
+18 runs, 284 assertions, 0 failures, 0 errors, 0 skips
+```
+
+`bundle exec rake test` without a server runs the tooling's own tests and skips the sixteen scenario
+tests — by design, and never mistaken for a pass: `bin/conformance` fails on any skip.
+
+## Gates
+
+```sh
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo deny check licenses sources
+cargo test
+bin/conformance
 bundle exec rake test
 ```
 
-254 runs, 755 assertions, 0 failures. (12 skips with no live server configured — 11 conformance
-scenario files plus a Postgres pooler probe, which needs a live Postgres; see
-`conformance/README.md` for running the corpus for real. This line previously read "one skip,"
-true before the conformance suite existed but stale for a while after — a claim naming a count is
-only as good as whoever remembers to re-measure it after the next thing that changes it, which is
-exactly the discipline `docs/STATUS.md`-style "verify a commit reference the way you verify a
-guard" — one repo over — argues for.)
-
-`test/dummy` is a minimal host that supplies exactly the obligations above and nothing else — its
-job is to prove the engine loads and runs in a process that has never seen the application it was
-extracted from.
-
-## Deploying it
-
-`Dockerfile` and `config/deploy.yml` are here. The image is **422 MB** against the maker app's
-1.59 GB (on the Unraid box's own daemon it lists at 398 MB, and the Rust image beside it at 168 MB —
-`crates/tinkerex-sync/README.md`), because this one installs none of what that one needs — libvips, pdfium, resvg, f3d, the
-Rust STL thumbnailer, Node and asset precompilation. This app is `api_only`; it holds chunks and
-serves JSON.
-
-```sh
-kamal setup                                   # first time
-kamal deploy
-kamal app exec --reuse "env EMAIL=you@example.com NAME=laptop bin/rails sync:device:issue"
-```
-
-That last one prints a device token **once** and keeps only its digest. Capture it into a file
-rather than reading it off the terminal; it is 43 base64url characters, not hex, and a pattern
-written for hex silently matches nothing.
-
-Three things worth reading before the first deploy:
-
-- **`db:prepare` runs from the entrypoint, not from `CMD`.** Without it the container comes up on
-  an empty volume with no schema. That is how the first real deploy shipped: kamal reported
-  success, the proxy reported healthy, and the first command to touch a table said
-  `Could not find table 'users'`. The entrypoint guards on the command really being the server, so
-  `kamal app exec` and one-off rake tasks do not migrate as a side effect of running.
-- **`/up` reads the database, and it has to.** A static 200 answers healthy for an app that cannot
-  serve a single request, which is worse than having no probe at all — it actively tells the proxy
-  to send traffic. Keep it a real query.
-
-- **The volume holds the library, not a cache.** With `STORAGE_BACKEND=local` it is both the SQLite
-  database and every chunk byte. It must be a real device, not a plain-local docker volume — a
-  missing volume is not an error to docker, it silently *creates* one on the VM's own disk and
-  everything looks healthy.
-- **`CABLE_ADAPTER: async` is in-process only.** One web container is fine; with two, devices
-  attached to one never hear the other's broadcasts and nothing reports it.
-
-**Deployed 2026-08-23** to `192.168.1.95` (Unraid VM), reachable as `sync.tinkerex.local` and
-`sync.tinkerex.home`. Verified against the running host, not against the suite: all eight engine
-tables plus the three host tables present; `/up` 200 on both hostnames; `/v1/tree` 401
-unauthenticated and 200 with a minted device token; and a full mutation round trip —
-`POST /v1/nodes` -> `GET /v1/tree` -> `GET /v1/changes` -> `POST /v1/nodes/:id/move` ->
-`DELETE` -> `GET /v1/trash` -> `POST /v1/trash/:id/restore`, with `head_seq` advancing 1 -> 5 and
-each op appearing in the changelog. Probe data purged afterwards; the host is empty apart from one
-issued device.
-
-**The maker app is not pointed at it yet.** Nothing sets `LIBRARY_BACKEND=chunk_remote` against
-this host; the three Unraid backends still run their own way. That cutover is a separate change.
+CI runs all of them on a self-hosted runner (`.github/workflows/ci.yml`). The Postgres and S3 legs
+are manual — the crate README has the commands.
 
 ## History
 
-This engine was extracted from the [tinkerex](https://github.com/chaim354/tinkerex) monorepo on
-2026-08-20 with `git filter-repo`, preserving 108 commits.
+The sync engine was extracted from the [tinkerex](https://github.com/chaim354/tinkerex) monorepo
+on 2026-08-20 with `git filter-repo`, preserving 108 commits, and lived here as a mountable Rails
+engine plus a standalone host app until the Rust rewrite (`docs/superpowers/plans/2026-09-30-rust-rewrite.md`)
+replaced it: the cutover on 2026-10-07 (`docs/superpowers/plans/2026-10-07-rust-cutover.md`), the
+deletion of the Ruby in Phase 6. `docs/SYNC_SERVER.md` is the Rails implementation's notes, kept
+for the reasoning.
 
 **Commits from before the extraction show files at their historical paths** — `app/models/version.rb`
 rather than `app/models/sync/version.rb`, `app/services/storage/` rather than
-`app/services/sync/storage/`, and the v1 controllers under `app/controllers/v1/` rather than
-`app/controllers/sync/v1/`. That is what actually happened, and it is left that way on purpose:
-those moves changed the files enough that git itself does not record them as renames, so any
-lineage tying old path to new would be an assertion nobody could verify rather than something the
-history shows. `git log --all -- <old-path>` finds the earlier work.
-
-The monorepo retains the complete record, including every commit that touched the maker
-application alongside the engine.
+`app/services/sync/storage/`. Those moves changed the files enough that git does not record them as
+renames, so any lineage tying old path to new would be an assertion nobody could verify; `git log
+--all -- <old-path>` finds the earlier work. The monorepo retains the complete record, including
+every commit that touched the maker application alongside the engine.

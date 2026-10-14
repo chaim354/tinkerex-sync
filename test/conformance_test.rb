@@ -23,19 +23,18 @@ require_relative "../conformance/runner"
 # SKIPS CLEANLY WITH NO SERVER, ON PURPOSE. This corpus's whole point is exercising a REAL, RUNNING
 # host -- "expectations written by the same mind that wrote the implementation agree with the
 # implementation, including where the implementation is wrong" (runner.rb, restating the FakeS3
-# lesson) -- so there is no in-process fake standing in when one is not configured, unlike every
-# other file under test/, which boots test/dummy and never leaves the process. `rake test` must
-# still exit green with no server configured (nobody without one should have their run broken by
-# this file), so every per-scenario test below skips on ENV["SYNC_SERVER_URL"] rather than failing
-# or erroring.
+# lesson) -- so there is no in-process fake standing in when one is not configured; the server
+# under test is the Rust binary, and only a running one can answer. `rake test` must still exit
+# green with no server configured (nobody without one should have their run broken by this file),
+# so every per-scenario test below skips on ENV["SYNC_SERVER_URL"] rather than failing or erroring.
 #
 # THAT SKIP IS INVISIBLE TO ANYTHING INSIDE THIS SUITE. A skipped test and an executed, passing
 # test both report "not red," and nothing in Minitest lets one test assert about another test's own
 # skip -- so the guarantee that this file actually ran for real, rather than quietly skipping,
-# belongs to the CALLER, not to this file. .github/workflows/ci.yml's conformance job sets both env
-# vars below AND parses the run's own summary line for a nonzero skip count, failing the CI step if
-# it finds one. Running this suite by hand with no server is the one case where a skip is not just
-# expected but correct.
+# belongs to the CALLER, not to this file. bin/conformance -- what .github/workflows/ci.yml's
+# conformance job runs -- boots a fresh server, sets both env vars below, AND parses the run's own
+# summary line for a nonzero skip count or zero runs, failing if it finds either. Running this
+# suite by hand with no server is the one case where a skip is not just expected but correct.
 #
 # THE ONE TEST THAT NEVER SKIPS: "the corpus has at least one scenario file". Every test below it is
 # GENERATED from Dir.glob's result at class-definition time. If that glob ever silently returned
@@ -43,7 +42,7 @@ require_relative "../conformance/runner"
 # be nothing to generate, nothing to skip, and nothing to run: `rake test` would report a clean 0
 # runs for this file's would-be coverage and look exactly like success. This one test has no server
 # dependency, always runs, and turns that failure mode into a loud, ordinary red.
-class ConformanceTest < ActiveSupport::TestCase
+class ConformanceTest < Minitest::Test
   SCENARIOS_DIR = File.expand_path("../conformance/scenarios", __dir__)
   SCHEMA_PATH   = File.expand_path("../conformance/schema.json", __dir__)
 
@@ -194,7 +193,7 @@ class ConformanceTest < ActiveSupport::TestCase
   # gives no supported way to do.
   SCENARIO_PATHS.each do |scenario_path|
     test "conformance scenario: #{File.basename(scenario_path)}" do
-      unless ENV["SYNC_SERVER_URL"].present?
+      if ENV["SYNC_SERVER_URL"].to_s.strip.empty?
         skip "SYNC_SERVER_URL not set -- this test needs a live server (see conformance/README.md " \
              "and bin/conformance-record's own usage comment). rake test is otherwise unaffected."
       end
@@ -203,7 +202,7 @@ class ConformanceTest < ActiveSupport::TestCase
       # point is a misconfiguration to report loudly, not a second reason to skip quietly. Skipping
       # here would recreate exactly the "reports success having asserted nothing" trap this file
       # otherwise exists to avoid.
-      assert ENV["SYNC_DEVICE_TOKEN"].present?,
+      refute ENV["SYNC_DEVICE_TOKEN"].to_s.strip.empty?,
              "SYNC_SERVER_URL is set but SYNC_DEVICE_TOKEN is not -- both are required, the same " \
              "as bin/conformance-record's own usage."
 
@@ -344,10 +343,11 @@ class ConformanceTest < ActiveSupport::TestCase
 
   # Same rule, same reason, as bin/conformance-record's own default_headers_for: a Hash/Array
   # body is a real JSON API call and defaults to application/json; a bare String body is raw bytes
-  # bound for the presigned chunk-blob PUT and defaults to application/octet-stream, because Rails
-  # parses any application/json-labelled request body before the controller runs and 400s a raw
-  # byte body that doesn't happen to also be valid JSON. A step's own `headers:` is merged in after
-  # this, in run_scenario, so it always wins.
+  # bound for the presigned chunk-blob PUT and defaults to application/octet-stream -- what those
+  # bytes are, and what every recording sent. (The Rails host the corpus was first recorded against
+  # parsed any application/json-labelled body before its controller ran and 400'd raw bytes that
+  # were not also valid JSON; the Rust server reads the blob PUT's body as bytes whatever its
+  # label.) A step's own `headers:` is merged in after this, in run_scenario, so it always wins.
   def default_headers_for(body)
     {
       "Content-Type" => (body.is_a?(String) ? "application/octet-stream" : "application/json"),

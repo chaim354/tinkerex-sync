@@ -516,22 +516,43 @@ Record the arc in the Kaneo record via the maker repo's `bin/log`, as every arc 
 
 Only after §7.4's week and a rollback window the operator is comfortable with.
 
-- [ ] Delete `app/`, `lib/`, `host/`, `test/` (except `test/conformance_test.rb` and
+- [x] Delete `app/`, `lib/`, `host/`, `test/` (except `test/conformance_test.rb` and
   `test/test_helper.rb`'s minimal replacement), `db/`, `tinkerex-sync.gemspec`, `Rakefile`'s
   engine tasks, the Ruby `Dockerfile` stages; shrink the `Gemfile` to `json_schemer` + `minitest`
   (+ `psych`) for the verifier and recorder. `test/conformance_test.rb`'s route-coverage check
   drew `Sync.draw_v1_routes`; replace it with a checked-in route list the binary prints
   (`tinkerex-sync routes`) and a test that the printed list matches the checked-in one, so the
   "every route is exercised" guard keeps a source that cannot go vacuous.
-- [ ] Remove the Ruby CI jobs; `conformance-rust` becomes `conformance`.
-- [ ] Rewrite this repo's `CLAUDE.md`: §0–§3 for the binary; §4 keeps every rule with its Rust
+  **2026-10-14** (branch `claude/e3-decommission`): 159 tracked files and 11,132 lines deleted —
+  `app/` 50, `lib/` 7, `host/` 36, `db/` 1, `test/` 61, the gemspec, the Ruby `Dockerfile`, and
+  `config/deploy.yml` + `.kamal/secrets` (the Ruby host's standalone kamal *service*, which built
+  the deleted `Dockerfile` and collided with the accessory). `test/` keeps the verifier, a plain
+  Minitest helper, and two tests of tooling that stays — the matcher's (`conformance_runner_test.rb`)
+  and `bin/build-and-push`'s; the Gemfile is `rake`, `minitest`, `json_schemer` (no `psych`: the
+  bundle has always used Ruby's default psych, and naming it would add a native gem build). The
+  route list is `conformance/routes.txt`, 30 lines — the binary's 28 `/v1` routes plus `GET /up`
+  and `GET /cable` (the Ruby drawer's 26 are among them, compared line for line) — held to
+  `tinkerex-sync routes` byte for byte by `tests/routes.rs`; the verifier refuses an empty list,
+  and names `/up` and `/cable` as coverage exceptions with reasons. Corpus against the binary:
+  `18 runs, 284 assertions, 0 failures, 0 errors, 0 skips`. Both guards mutation-checked (the
+  commit body has the red lines). Postgres legs not re-run (no Postgres on the Mac).
+- [x] Remove the Ruby CI jobs; `conformance-rust` becomes `conformance`. **2026-10-14:** `test` and
+  the Ruby `conformance` are gone; the renamed job runs `bundle exec rake test` (the tooling's own
+  tests, which only the deleted `test` job ran) and then `bin/conformance` (was
+  `bin/conformance-rust`, now a shim for one release).
+- [x] Rewrite this repo's `CLAUDE.md`: §0–§3 for the binary; §4 keeps every rule with its Rust
   form (§5 above) and drops §4a/§4c (the in-process adapter and the engine-structure rules, which
   have no Rust counterpart) with a one-line note of where they went; §7 (the corpus) unchanged in
-  substance; §8 for `cargo`/`docker`/`bin/build-and-push`.
-- [ ] `README.md`: the binary, its subcommands, the env, the volume, the two stores, the
-  measured image size and corpus run line.
-- [ ] `docs/SYNC_SERVER.md`: mark HISTORICAL (it describes the Rails implementation); the
-  pooler section's substance moves to the `doctor` subcommand's docs.
+  substance; §8 for `cargo`/`docker`/`bin/build-and-push`. **2026-10-14.** 4a's four server-side
+  rules (the device API's `to_root`, no destination-vacant check, idempotent live undelete, name
+  checked for presence only) are kept in a new §4d beside this plan's §5; 4c's two general guard
+  lessons moved to §5; §6 is now the image and `bin/build-and-push`.
+- [x] `README.md`: the binary, its subcommands, the env, the volume, the two stores, the
+  measured image size and corpus run line. **2026-10-14**, plus how the maker app and devices
+  reach it.
+- [x] `docs/SYNC_SERVER.md`: mark HISTORICAL (it describes the Rails implementation); the
+  pooler section's substance moves to the `doctor` subcommand's docs. **2026-10-14:** the banner
+  points at `doctor` and at `src/services/doctor.rs`, whose own header carries the argument.
 
 ---
 

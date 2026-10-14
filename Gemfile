@@ -2,23 +2,22 @@
 
 source "https://rubygems.org"
 
-# The engine's own runtime deps (rails, aws-sdk-s3) come from the gemspec.
-gemspec
+# ONLY THE CONFORMANCE TOOLING IS RUBY NOW. Phase 6 of docs/superpowers/plans/2026-09-30-rust-rewrite.md
+# deleted the Rails engine and its host; the server is the Rust binary under crates/, built with
+# cargo. What stays Ruby stays so on purpose: the corpus verifier (test/conformance_test.rb) and
+# recorder (bin/conformance-record) grade that binary from OUTSIDE its own language, because a
+# grader written by the same hands as the server would share its assumptions (conformance/README.md,
+# "Why this corpus exists"). These gems are all the two need, plus bin/build-and-push's own test.
+#
+# NO `psych`: YAML is Ruby's default psych gem, which every Ruby this repo runs carries and which
+# this bundle has always used (it was never in the lock). Naming it would trade that for a gem build
+# that needs libyaml headers, for no gain.
 
-# Only what the two apps in this repo need to BE Rails apps -- the engine itself requires none of
-# these, and none is a runtime dependency of the gem (see the gemspec).
-gem "sqlite3"        # test/dummy and host/ both use it
+gem "rake"     # the `test` task (Rakefile)
+gem "minitest" # plain Minitest -- the files under test/ have needed no Rails since Phase 6
 
-# host/ IS MEANT TO BE RUN, and without a server gem `bin/rails server` exits with
-# "Could not find a server gem" -- which no suite could ever have caught, because a test boots the
-# app without ever serving HTTP. Found by starting it.
-gem "puma"
-gem "debug", require: false, group: %i[development test]
-
-# conformance/schema.json validation (test/conformance_test.rb, Task 3) -- MIT, and its own
-# runtime deps are three small MIT gems (hana, regexp_parser, simpleidn) plus bigdecimal, already
-# in this bundle via Rails; checked directly against each fetched .gem's own gemspec, not assumed.
-# The schema itself declares draft 2020-12, which this is the one maintained Ruby gem supporting.
-# Not a runtime dependency of the gem itself, so it stays out of the gemspec (same reasoning as
-# sqlite3/puma/debug above).
-gem "json_schemer", require: false, group: %i[development test]
+# conformance/schema.json validation (test/conformance_test.rb) -- MIT, and its own runtime deps
+# are three small MIT gems (hana, regexp_parser, simpleidn) plus bigdecimal; checked directly
+# against each fetched .gem's own gemspec, not assumed. The schema declares draft 2020-12, which
+# this is the one maintained Ruby gem supporting.
+gem "json_schemer"

@@ -1,10 +1,11 @@
 # tinkerex-sync (the Rust server)
 
 The sync server as one binary: the chunk, version and changelog engine behind the v1 API, the
-colocated blob tier, the Action Cable nudge, and the operator subcommands the Rails host exposed as
-rake tasks. It is graded against `../../conformance/` — sixteen recorded scenario files, verified
-by `test/conformance_test.rb` — not against the Ruby tests (`docs/superpowers/plans/2026-09-30-rust-rewrite.md`
-says why, and what is done).
+colocated blob tier, the Action Cable nudge, and the operator subcommands that replaced the Rails
+host's rake tasks. It is the only implementation since Phase 6 of
+`docs/superpowers/plans/2026-09-30-rust-rewrite.md` deleted the Ruby, and it is graded against
+`../../conformance/` — sixteen recorded scenario files, verified by `test/conformance_test.rb` from
+outside this crate's own language — never against ported Ruby tests (that plan says why).
 
 ```sh
 cargo build --release -p tinkerex-sync
@@ -15,7 +16,7 @@ tinkerex-sync serve --port 3000              # serve --migrate does both; --sche
 tinkerex-sync device issue --email a@b.c     # prints user_id:/device_id:/device_token: as the rake task did
 tinkerex-sync device list  --email a@b.c
 tinkerex-sync stats [--brief]                # what bin/backup-db and bin/restore-db (maker repo) parse
-tinkerex-sync routes                         # the 29 HTTP routes + /cable
+tinkerex-sync routes                         # the 29 HTTP routes + /cable = conformance/routes.txt
 tinkerex-sync doctor                         # config, schema presence, the Postgres pooler probe
 tinkerex-sync gc retention    [--grace 3600] [--user N] [--dry-run]
 tinkerex-sync gc reap-pending [--ttl-hours 24]   [--user N] [--dry-run]
@@ -86,21 +87,22 @@ cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo deny check licenses sources        # permissive licences only; deny.toml
 cargo test                               # every TestServer on a temp SQLite file
-bin/conformance-rust                     # boots the binary on 3004 and runs the whole corpus
+bin/conformance                          # boots the binary on 3004 and runs the whole corpus
 
 # The legs CI does not run (no Postgres, no bucket on the runner); each PRINTS "NOT RUN" when its
 # variable is unset rather than passing silently, and each needs an EMPTY database or bucket:
 TEST_DATABASE_URL=postgres://…/fresh_db cargo test              # the whole suite on Postgres
-CONFORMANCE_DATABASE_URL=postgres://…/fresh_db bin/conformance-rust
+CONFORMANCE_DATABASE_URL=postgres://…/fresh_db bin/conformance
 TEST_S3_ENDPOINT=http://127.0.0.1:8333 TEST_S3_BUCKET=b \
   TEST_S3_ACCESS_KEY_ID=… TEST_S3_SECRET_ACCESS_KEY=… cargo test --test s3_roundtrip
 ```
 
-Measured 2026-09-30 on the development box: `bin/conformance-rust` reports
+Measured 2026-09-30 on the development box: `bin/conformance` (then `bin/conformance-rust`) reports
 `18 runs, 284 assertions, 0 failures, 0 errors, 0 skips` on SQLite and the same on Postgres 16 —
-the figure the Ruby host reports on a fresh database; the whole `cargo test` suite passes on
+the figure the Ruby host reported on a fresh database; the whole `cargo test` suite passes on
 Postgres; and `s3_roundtrip` passes against a SeaweedFS 4.48 binary (store verbs, presigned PUT
-and GET, a commit whose finalize verifies against the bucket).
+and GET, a commit whose finalize verifies against the bucket). Re-measured 2026-10-14, with the
+Ruby deleted (Phase 6), on SQLite only — the operator's Mac has no Postgres: the same corpus line.
 
 The image, built for the box's platform and smoke-tested locally, **without pushing** (the cutover
 plan's §2.1). `sqlite3` must be present: the maker repo's backup and restore run it inside this
@@ -122,18 +124,19 @@ docker rm -f rust-smoke
 
 ## The image
 
-`Dockerfile.rust` (`SYNC_IMPL=rust bin/build-and-push`) keeps the Ruby image's paths, port, uid and
-entrypoint guard, and installs `sqlite3` beside `curl` because the maker repo's backup and restore
+`Dockerfile.rust` (`bin/build-and-push`) keeps the paths, port, uid and entrypoint guard of the Ruby
+image it replaced, and installs `sqlite3` beside `curl` because the maker repo's backup and restore
 run it inside the deployment's image. **Measured 2026-10-07**, first build, `linux/amd64` on an
 Apple-silicon Docker Desktop by the smoke above, then loaded onto the Unraid box with
-`docker save | ssh … docker load`: **168 MB** there, where the Ruby image it replaces lists at
-**398 MB** (`docker images` on the same daemon — the like-for-like pair; the root README's 422 MB
-for the Ruby image was measured on another daemon, and Docker Desktop lists the Rust image at
-44 MB, its compressed size). `tinkerex-sync 0.1.0`, sqlite3
-3.40.1, the entrypoint's `migrate` printed `Created`, `/up` answered `ok`, `stats --brief`
-`0 nodes, 0 versions`.
+`docker save | ssh … docker load`: **168 MB** there, where the Ruby image it replaced lists at
+**398 MB** (`docker images` on the same daemon — the like-for-like pair; the 422 MB once quoted for
+the Ruby image was measured on another daemon, and Docker Desktop then listed the Rust image at
+44 MB, its compressed size — on 2026-10-14 the same Mac, Docker 29.7.2, lists it at 168 MB too).
+`tinkerex-sync 0.1.0`, sqlite3 3.40.1, the entrypoint's `migrate` printed `Created`, `/up` answered
+`ok`, `stats --brief` `0 nodes, 0 versions`.
 
-The revision tag `bin/build-and-push` pushes carries the implementation -- `:<sha>-rust` beside
-`:<sha>-ruby` -- and `SYNC_PUSH_LATEST=0` pushes it WITHOUT moving `:latest`, which is what the
-maker app's accessory pulls on its next reboot. Promotion is a separate retag (the cutover plan's
-§4.2); so is the rollback (§6). `test/build_and_push_test.rb` drives the script's tagging.
+The revision tag `bin/build-and-push` pushes is `:<sha>-rust` -- the suffix told a Ruby build from
+a Rust build of one commit during the cutover, and outlived the Ruby so those tags keep their
+meaning -- and `SYNC_PUSH_LATEST=0` pushes it WITHOUT moving `:latest`, which is what the maker
+app's accessory pulls on its next reboot. Promotion is a separate retag (the cutover plan's §4.2);
+so is the rollback (§6). `test/build_and_push_test.rb` drives the script's tagging.

@@ -1,9 +1,9 @@
 ---
 name: 01-enrolment
-description: Device enrolment and whoami. This host has no self-service login (see
-  V1::DevicesController's own comment) -- the bootstrap device token is minted out-of-band
-  by an operator running `bin/rails sync:device:issue`, the same shape as any other
-  server credential, and every request below authenticates with it. First whoami confirms
+description: Device enrolment and whoami. This server has no self-service login -- the
+  bootstrap device token is minted out-of-band by an operator running `tinkerex-sync
+  device issue` (the Rails host's `sync:device:issue` when this was recorded), the same
+  shape as any other server credential, and every request below authenticates with it. First whoami confirms
   that bootstrap credential's identity; then POST /v1/devices uses that same credential
   to enrol a second, sibling device for the same user -- the mechanism the rest of
   this corpus relies on for proof that device-token auth works exactly as recorded

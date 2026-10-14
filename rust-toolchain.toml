@@ -1,8 +1,9 @@
 # Pins the toolchain for every cargo invocation made from inside this checkout -- the gates in
 # crates/tinkerex-sync/README.md and the self-hosted runner's rust-check job alike -- so clippy
 # grades the same lints in both places: #16's one red CI run was a clippy version gap between the
-# development box and the runner. Dockerfile.rust does NOT copy this file; the image builds with
-# rust:1-bookworm's own stable. Bump it deliberately, in its own commit, and re-run the gates.
+# development box and the runner. Dockerfile.rust does NOT copy this file; its build stage pins the
+# same version in its FROM line (rust:1.99.0-bookworm). Bump the two together, deliberately, in
+# their own commit, and re-run the gates.
 [toolchain]
 channel = "1.99.0"
 components = ["rustfmt", "clippy"]

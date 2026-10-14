@@ -35,10 +35,37 @@ class BuildAndPushTest < ActiveSupport::TestCase
                  "the promote command is printed, naming the tag just pushed")
   end
 
-  test "the default build still moves :latest beside a :<sha>-ruby tag, with SYNC_IMPL unset" do
+  test "the default build is the Rust server and moves :latest beside a :<sha>-rust tag, with SYNC_IMPL unset" do
     # The bare invocation is the one that broke: `set -u` plus a bare `$SYNC_IMPL` in the label exited
-    # "unbound variable" after docker login. SYNC_IMPL is explicitly UNSET here, not "ruby".
+    # "unbound variable" after docker login. SYNC_IMPL is explicitly UNSET here, not "rust".
+    #
+    # It is also the invocation an operator types without thinking, so it must build what production
+    # runs. Until 2026-10-14 it built the RUBY image and moved :latest, a week after production cut
+    # over to Rust: a bare run followed by `kamal accessory reboot sync` rolled production back,
+    # silently (the readiness audit's footgun, the maker repo's docs/AUDIT-2026-10-12-readiness.md
+    # §2.4.2).
     out, status, build, calls = run_script({})
+
+    assert status.success?, out
+    refute_nil build, "expected one `docker buildx build`, got: #{calls.inspect}"
+    assert_includes build, "-f Dockerfile.rust"
+    assert_includes build, "--label org.opencontainers.image.description=tinkerex-sync (rust)"
+
+    tags = tags_of(build)
+    assert_equal 2, tags.size, tags.inspect
+    assert_includes tags, "#{REPO}:latest"
+    revision = (tags - [ "#{REPO}:latest" ]).first
+    assert_match REVISION_TAG, revision
+    assert revision.end_with?("-rust"), revision
+    assert_match(/pushed #{Regexp.escape(REPO)}:latest -> #{Regexp.escape(revision)}/, out)
+  end
+
+  test "SYNC_IMPL=ruby still builds the Ruby host image: the rollback image's rebuild path until Phase 6" do
+    # The rollback target is a pinned tag (`ruby-<R>`, cutover plan §6) and needs no build; this arm
+    # is how that image would be REBUILT if the tag were ever lost. Phase 6 deletes it with the Ruby.
+    # Asked for by name it moves :latest like any build (SYNC_PUSH_LATEST=0 leaves :latest alone), so
+    # followed by a reboot it IS a rollback -- requested explicitly, never by a bare run.
+    out, status, build, calls = run_script("SYNC_IMPL" => "ruby")
 
     assert status.success?, out
     refute_nil build, "expected one `docker buildx build`, got: #{calls.inspect}"
@@ -51,7 +78,6 @@ class BuildAndPushTest < ActiveSupport::TestCase
     revision = (tags - [ "#{REPO}:latest" ]).first
     assert_match REVISION_TAG, revision
     assert revision.end_with?("-ruby"), revision
-    assert_match(/pushed #{Regexp.escape(REPO)}:latest -> #{Regexp.escape(revision)}/, out)
   end
 
   test "the registry password reaches docker login on stdin, never in argv" do

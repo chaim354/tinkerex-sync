@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build + push this repo's own image (the Dockerfile at the root, host/ as the app) to ghcr, under
-# a STABLE tag that exists independently of this repo's own `kamal deploy`.
+# Build + push this repo's own image (./Dockerfile.rust, the Rust server, by default; SYNC_IMPL=ruby
+# builds the Dockerfile at the root, host/ as the app) to ghcr, under a STABLE tag that exists
+# independently of this repo's own `kamal deploy`.
 #
 # THAT DISTINCTION IS THE WHOLE REASON THIS SCRIPT EXISTS. config/deploy.yml here runs this app as
 # ITS OWN kamal service (service: tinkerex-sync) and, when `kamal deploy` is actually run, tags the
@@ -54,16 +55,24 @@ if [ -n "$(git status --porcelain)" ]; then
   REVISION="$REVISION-dirty"
 fi
 
-# WHICH IMPLEMENTATION: the Ruby host (./Dockerfile, the default until the cutover plan's §9
-# retires it) or the Rust server (./Dockerfile.rust). Same registry, same `:latest`, same revision
-# label -- the accessory that pulls `:latest` cannot tell them apart, which is the whole cutover
-# design (docs/superpowers/plans/2026-10-07-rust-cutover.md): retag to roll forward or back.
+# WHICH IMPLEMENTATION: the Rust server (./Dockerfile.rust, THE DEFAULT) or the Ruby host
+# (./Dockerfile, SYNC_IMPL=ruby). Same registry, same `:latest`, same revision label -- the
+# accessory that pulls `:latest` cannot tell them apart, which is the whole cutover design
+# (docs/superpowers/plans/2026-10-07-rust-cutover.md): retag to roll forward or back.
+#
+# RUST IS THE DEFAULT BECAUSE PRODUCTION RUNS IT: the `sync` accessory cut over on 2026-10-07, and
+# this default followed on 2026-10-14. Until then a bare run built the RUBY image and moved
+# `:latest`, so a bare run followed by `bin/kamal accessory reboot sync` rolled production back to
+# Ruby, silently -- the readiness audit's footgun (the maker repo's
+# docs/AUDIT-2026-10-12-readiness.md §2.4.2). A bare run can no longer do that. SYNC_IMPL=ruby
+# exists only to rebuild the rollback image (cutover plan §6) until Phase 6 of
+# docs/superpowers/plans/2026-09-30-rust-rewrite.md deletes it with the rest of the Ruby.
 #
 # Resolved ONCE, here, because `set -u` makes the bare `$SYNC_IMPL` in the label below an "unbound
 # variable" exit -- AFTER `docker login` has already succeeded. The default (no SYNC_IMPL exported)
 # build died there from the day the label was added until 2026-10-07; the label had only ever been
 # built with SYNC_IMPL exported. test/build_and_push_test.rb drives the bare invocation.
-SYNC_IMPL="${SYNC_IMPL:-ruby}"
+SYNC_IMPL="${SYNC_IMPL:-rust}"
 case "$SYNC_IMPL" in
   ruby) DOCKERFILE=Dockerfile ;;
   rust) DOCKERFILE=Dockerfile.rust ;;

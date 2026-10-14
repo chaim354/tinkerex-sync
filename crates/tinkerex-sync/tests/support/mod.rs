@@ -37,7 +37,7 @@ pub struct TestServer {
 impl TestServer {
     /// A fresh SQLite database — or, with `TEST_DATABASE_URL` set, that Postgres database, which
     /// must be EMPTY at the start of a run (fixed emails across the test files collide on a reused
-    /// one; a CI job creates it fresh, exactly as bin/conformance-rust demands). Every test in
+    /// one; a CI job creates it fresh, exactly as bin/conformance demands). Every test in
     /// every binary switches together, so one `cargo test` run is one leg.
     pub async fn start() -> Self {
         Self::start_with(

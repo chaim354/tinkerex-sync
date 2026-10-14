@@ -1,5 +1,5 @@
 //! `serve --scheduler`: the three maintenance jobs the Ruby host DEFINED and never scheduled
-//! (`host/config/` has no `recurring.yml`; nothing enqueued `Sync::RetentionJob`,
+//! (its `config/` had no `recurring.yml`; nothing enqueued `Sync::RetentionJob`,
 //! `Sync::ChunkReaperJob` or `Sync::PendingCommitReaperJob` — plan §0). Off by default, and
 //! turned on only after the dry-runs the cutover plan (§7.4) calls for: enabling the reapers
 //! deletes bytes the Ruby deployment never deleted.

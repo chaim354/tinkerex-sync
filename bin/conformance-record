@@ -90,8 +90,8 @@
 # guaranteed to. There is no comment-preserving YAML writer in this repo's dependency set (see the
 # Gemfile); noted here rather than solved here.
 #
-# NOT AUTOLOADED, same as conformance/runner.rb -- this is repo tooling, not part of the gem
-# (tinkerex-sync.gemspec's spec.files does not include conformance/ or bin/conformance-record).
+# NOT AUTOLOADED, same as conformance/runner.rb -- plain repo tooling, run by path. (There is no gem
+# any more for it to be left out of: tinkerex-sync.gemspec went with the Ruby engine in Phase 6.)
 
 require "net/http"
 require "uri"
@@ -137,11 +137,13 @@ JSON_TYPE_NAME = {
 # The default Content-Type depends on what `body` actually is: a Hash/Array body is a real JSON
 # API call (24 of this corpus's 25 endpoints); a bare String body is raw bytes bound for the one
 # endpoint that isn't (the presigned chunk-blob PUT -- see perform_http's own comment on request
-# encoding). Getting this wrong is not cosmetic: Rails parses any request body whose Content-Type
-# claims application/json BEFORE the controller runs, regardless of which controller it is, and a
-# raw byte body that happens not to parse as JSON (which is the ordinary case for real file bytes)
-# is rejected with a bare 400 -- BlobController#upload never gets a chance to run. A step's own
-# `headers:` is merged in AFTER this at every call site, so it always overrides this default.
+# encoding). Getting this wrong was not cosmetic against the Rails host this corpus was first
+# recorded from: Rails parsed any request body whose Content-Type claimed application/json BEFORE
+# the controller ran, and a raw byte body that did not happen to parse as JSON (the ordinary case
+# for real file bytes) was rejected with a bare 400 before the blob upload ever ran. The Rust server
+# reads the blob PUT's body as bytes whatever its label, but octet-stream is what those bytes are,
+# and what every recording sent. A step's own `headers:` is merged in AFTER this at every call site,
+# so it always overrides this default.
 def default_headers_for(body)
   {
     "Content-Type" => (body.is_a?(String) ? "application/octet-stream" : "application/json"),
@@ -228,7 +230,7 @@ end
 #
 # RESPONSE DECODING, the matching half: JSON.parse only when the response actually claims to be
 # JSON (Content-Type: application/json, what every endpoint except the two chunk-blob endpoints
-# sends). Anything else -- today, only BlobController#download's `application/octet-stream` -- is
+# sends). Anything else -- today, only the blob GET's `application/octet-stream` -- is
 # recorded as the literal raw String, UTF-8, so a scenario can assert it with a plain string
 # equality the same way every other field is asserted. Blindly JSON-parsing a non-JSON body used
 # to half-work by coincidence: a quoted request body round-tripped back through JSON.parse strips
@@ -380,28 +382,35 @@ base_uri = ENV["SYNC_SERVER_URL"]
 device_token = ENV["SYNC_DEVICE_TOKEN"]
 if base_uri.to_s.empty? || device_token.to_s.empty?
   abort <<~MSG
-    bin/conformance-record needs both SYNC_SERVER_URL and SYNC_DEVICE_TOKEN.
+    bin/conformance-record needs both SYNC_SERVER_URL and SYNC_DEVICE_TOKEN. Record against the
+    binary on a FRESH database (11-admin.yml and 14-tenancy.yml provision fixed emails), with a
+    device issued under the default name (08-locks.yml expects it):
 
-      cd host && bin/rails db:prepare && EMAIL=you@example.com bin/rails sync:device:issue
-      STORAGE_BACKEND=local bin/rails server -p 3003 &
+      cargo build -p tinkerex-sync && W="$(mktemp -d)"
+      export STORAGE_BACKEND=local SECRET_KEY_BASE=dev SYNC_ADMIN_TOKEN=conformance-corpus-admin-token \\
+        SQLITE_DATABASE="$W/sync.sqlite3" CHUNK_LOCAL_DIR="$W/chunks"
+      target/debug/tinkerex-sync migrate
+      target/debug/tinkerex-sync device issue --email you@example.com   # prints a device token, once
+      target/debug/tinkerex-sync serve --bind 127.0.0.1 --port 3003 &
       SYNC_SERVER_URL=http://127.0.0.1:3003 SYNC_DEVICE_TOKEN=<token printed above> \\
         bin/conformance-record conformance/scenarios/01-enrolment.yml
   MSG
 end
 
-# /up TOUCHES THE DATABASE (host/config/routes.rb's own comment: "a static 200 is worse than no
-# healthcheck at all"), so this is a genuine readiness check, not a bare port-open probe -- it
-# fails clearly on an unmigrated schema instead of every step failing with a confusing 500.
+# /up TOUCHES THE DATABASE (it answers `ok` only after a real `SELECT count(*) FROM users` -- a
+# static 200 is worse than no healthcheck at all), so this is a genuine readiness check, not a bare
+# port-open probe -- it fails clearly on an unmigrated schema instead of every step failing with a
+# confusing 500.
 begin
   up = URI.join(base_uri, "/up")
   response = Net::HTTP.get_response(up)
   unless response.code == "200"
     abort "#{up} answered #{response.code} #{response.body} -- the server is up but not ready " \
-          "(an empty schema answers 503 here; run `bin/rails db:prepare` in host/ first)"
+          "(an empty schema answers 503 here; run `tinkerex-sync migrate` first)"
   end
 rescue StandardError => e
   abort "could not reach #{base_uri} (#{e.class}: #{e.message}) -- is the server running? " \
-        "STORAGE_BACKEND=local bin/rails server -p 3003, from host/"
+        "`tinkerex-sync serve --bind 127.0.0.1 --port 3003` (this script's usage message has the recipe)"
 end
 
 begin

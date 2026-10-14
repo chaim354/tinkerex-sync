@@ -7,7 +7,7 @@ require_relative "../conformance/runner"
 # refuses, so these tests are mostly about what must NOT match -- an over-permissive matcher would
 # record a corpus that passes against a server doing the wrong thing, which is the FakeS3 shape
 # (CLAUDE.md §14e) one level up.
-class ConformanceRunnerTest < ActiveSupport::TestCase
+class ConformanceRunnerTest < Minitest::Test
   M = Conformance::Matcher
 
   test "a literal must match exactly" do

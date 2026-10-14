@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
-# Build + push this repo's own image (./Dockerfile.rust, the Rust server, by default; SYNC_IMPL=ruby
-# builds the Dockerfile at the root, host/ as the app) to ghcr, under a STABLE tag that exists
-# independently of this repo's own `kamal deploy`.
+# Build + push this repo's image (./Dockerfile.rust, the Rust server -- the only implementation since
+# Phase 6 of docs/superpowers/plans/2026-09-30-rust-rewrite.md deleted the Ruby) to ghcr, under a
+# STABLE tag that exists independently of any `kamal deploy`.
 #
-# THAT DISTINCTION IS THE WHOLE REASON THIS SCRIPT EXISTS. config/deploy.yml here runs this app as
-# ITS OWN kamal service (service: tinkerex-sync) and, when `kamal deploy` is actually run, tags the
-# image by kamal's own per-deploy version (the git SHA kamal resolves internally) -- never
-# `:latest`, and never on a schedule anyone but that command controls. A Kamal ACCESSORY (what the
-# maker app, chaim354/tinkerex, would run this as, beside its own three LIBRARY_BACKEND
-# deployments) never builds anything: `kamal accessory boot/reboot` only PULLS a named image, the
-# same way it does today for the boxes/openscad sidecars and the addons bundle host. Until this
-# script, nothing produced the tag that pull needs -- "nothing publishes an image of it" was true
-# in exactly that sense, even though this repo's own standalone deploy had (separately) pushed
-# SHA-versioned images under the same repository name.
+# THAT DISTINCTION IS THE WHOLE REASON THIS SCRIPT EXISTS. A Kamal ACCESSORY -- which is how the
+# maker app, chaim354/tinkerex, runs this image, beside its own three LIBRARY_BACKEND deployments --
+# never builds anything: `kamal accessory boot/reboot` only PULLS a named image, the same way it does
+# for the boxes/openscad sidecars and the addons bundle host. Nothing else produces the tag that pull
+# needs. (This repo once carried its own config/deploy.yml for a standalone kamal SERVICE, which
+# tagged by kamal's per-deploy version and never `:latest`; it deployed the Ruby host and left with
+# it in Phase 6.)
 #
 # Mirrors chaim354/tinkerex's bin/build-boxes-sidecar / bin/build-openscad-sidecar: same registry,
 # same 1Password item, same revision label. The TAGS differ -- the revision tag carries the
-# implementation and `:latest` is optional (the tagging comment below). Run from THIS repo's root,
-# same as those two.
+# implementation suffix and `:latest` is optional (the tagging comment below). Run from THIS repo's
+# root, same as those two.
 #
 # The ghcr token comes from 1Password via bin/secret -- no export needed. Export
 # KAMAL_REGISTRY_PASSWORD first if you want to override it. `set -e` aborts here if the read fails
@@ -32,6 +29,7 @@ set -euo pipefail
 KAMAL_REGISTRY_PASSWORD="$(bin/secret KAMAL_REGISTRY_PASSWORD 'op://tinkerex/ghcr.io/password')"
 REPO="ghcr.io/chaim354/tinkerex-sync"
 IMAGE="$REPO:latest"
+DOCKERFILE=Dockerfile.rust
 
 # PROVENANCE -- the source commit rides inside the image as an OCI label, so a container already
 # running can name the build it came from with no registry access and no tag enumeration:
@@ -42,41 +40,34 @@ IMAGE="$REPO:latest"
 # repo): the OCI distribution API has no digest->tag reverse lookup, and `kamal accessory details`
 # shells out to `docker ps`, which prints the RUN REFERENCE -- `:latest` -- never a digest. The
 # label rides inside the image itself, so it survives tag GC or a moved `:latest`; the
-# `$REVISION-$SYNC_IMPL` tag below is registry inventory alongside it, not a substitute for it.
+# `$REVISION-rust` tag below is registry inventory alongside it, not a substitute for it.
 #
-# DO NOT SPELL THIS `git describe --dirty`. `--dirty` only consults TRACKED files, and this
-# Dockerfile's final stage does `COPY . .` from the working tree (build context = repo root, not a
-# subdirectory -- the Gemfile at the root needs the gemspec and lib/tinkerex_sync/version.rb
-# alongside it, and host/ needs the gem source next to it). An untracked file would build into the
-# image while `--dirty` kept reporting a clean SHA. `git status --porcelain` lists untracked files
-# too, so it is what decides -- same fix, same reasoning, as both sidecar scripts.
+# DO NOT SPELL THIS `git describe --dirty`. `--dirty` only consults TRACKED files, and
+# Dockerfile.rust COPYs crates/ from the working tree (build context = repo root), so an untracked
+# source file there would build into the image while `--dirty` kept reporting a clean SHA.
+# `git status --porcelain` lists untracked files too, so it is what decides -- same fix, same
+# reasoning, as both sidecar scripts. (So keep git worktrees OUTSIDE this checkout before running
+# this: one placed under it once made a revision `-dirty`, cutover plan §0.5.)
 REVISION="$(git rev-parse HEAD)"
 if [ -n "$(git status --porcelain)" ]; then
   REVISION="$REVISION-dirty"
 fi
 
-# WHICH IMPLEMENTATION: the Rust server (./Dockerfile.rust, THE DEFAULT) or the Ruby host
-# (./Dockerfile, SYNC_IMPL=ruby). Same registry, same `:latest`, same revision label -- the
-# accessory that pulls `:latest` cannot tell them apart, which is the whole cutover design
-# (docs/superpowers/plans/2026-10-07-rust-cutover.md): retag to roll forward or back.
-#
-# RUST IS THE DEFAULT BECAUSE PRODUCTION RUNS IT: the `sync` accessory cut over on 2026-10-07, and
-# this default followed on 2026-10-14. Until then a bare run built the RUBY image and moved
-# `:latest`, so a bare run followed by `bin/kamal accessory reboot sync` rolled production back to
-# Ruby, silently -- the readiness audit's footgun (the maker repo's
-# docs/AUDIT-2026-10-12-readiness.md §2.4.2). A bare run can no longer do that. SYNC_IMPL=ruby
-# exists only to rebuild the rollback image (cutover plan §6) until Phase 6 of
-# docs/superpowers/plans/2026-09-30-rust-rewrite.md deletes it with the rest of the Ruby.
-#
-# Resolved ONCE, here, because `set -u` makes the bare `$SYNC_IMPL` in the label below an "unbound
-# variable" exit -- AFTER `docker login` has already succeeded. The default (no SYNC_IMPL exported)
-# build died there from the day the label was added until 2026-10-07; the label had only ever been
-# built with SYNC_IMPL exported. test/build_and_push_test.rb drives the bare invocation.
-SYNC_IMPL="${SYNC_IMPL:-rust}"
-case "$SYNC_IMPL" in
-  ruby) DOCKERFILE=Dockerfile ;;
-  rust) DOCKERFILE=Dockerfile.rust ;;
-  *) echo "SYNC_IMPL must be ruby or rust, not '${SYNC_IMPL}'" >&2; exit 2 ;;
+# ONE IMPLEMENTATION. SYNC_IMPL chose between ./Dockerfile (the Ruby host) and ./Dockerfile.rust
+# until Phase 6 deleted the Ruby; there is nothing left to choose. `SYNC_IMPL=rust` -- the
+# cutover-era spelling in the plans and READMEs -- still works. Anything else is REFUSED, not
+# ignored, because the one other value anyone would type is `ruby`, from the cutover plan's
+# rollback notes, and ignoring it would build the Rust image and move `:latest` while the operator
+# believed they had rebuilt the rollback. A rollback needs no build: it is a retag of the pinned
+# Ruby image, ruby-<R> (docs/superpowers/plans/2026-10-07-rust-cutover.md §6).
+case "${SYNC_IMPL:-rust}" in
+  rust) ;;
+  *)
+    echo "SYNC_IMPL='${SYNC_IMPL}': this script builds only the Rust server since Phase 6 deleted the Ruby." >&2
+    echo "To roll back, retag the pinned Ruby image instead (cutover plan §6):" >&2
+    echo "  docker buildx imagetools create -t $IMAGE $REPO:ruby-<R>" >&2
+    exit 2
+    ;;
 esac
 
 # `:latest` IS PUSHED ONLY WHEN SYNC_PUSH_LATEST IS 1 (unset = 1). Exactly `0` or `1`: anything else
@@ -94,25 +85,23 @@ echo "$KAMAL_REGISTRY_PASSWORD" | docker login ghcr.io -u chaim354 --password-st
 # THE UNRAID BOX IS amd64; THIS DEV MACHINE MAY NOT BE (Apple Silicon is arm64). A plain
 # `docker build` tags and pushes an arm64 image just as happily as an amd64 one -- it does not
 # fail here, it fails on the box as an exec-format error, far from this line. --platform forces
-# the target explicitly; buildx cross-builds via QEMU emulation when the host arch differs,
-# matching config/deploy.yml's own `builder: arch: amd64` for this same app.
+# the target explicitly; buildx cross-builds via QEMU emulation when the host arch differs.
 
 # TWO TAGS, AND ONLY ONE OF THEM IS ALLOWED TO MOVE `:latest`.
 #
-# The revision tag carries the implementation -- `:<sha>-ruby`, `:<sha>-rust` -- because a Ruby
-# build and a Rust build of the SAME commit are two different images, and until this suffix they
-# overwrote each other's `:<sha>` tag. And `:latest` is pushed only when SYNC_PUSH_LATEST is not
-# `0` (validated above), because `:latest` is what the maker app's `sync` accessory pulls on its next
-# `kamal accessory reboot sync`: with every build moving it, the Rust image could not be pushed for
-# a rehearsal without also ARMING the next reboot to cut over (cutover plan §0.3.3). So:
+# The revision tag carries the implementation -- `:<sha>-rust` -- because during the cutover a Ruby
+# build and a Rust build of the SAME commit were two different images, and until the suffix they
+# overwrote each other's `:<sha>` tag. The suffix stays now that only one implementation exists, so
+# every tag pushed since then keeps meaning what it meant. And `:latest` is pushed only when
+# SYNC_PUSH_LATEST is not `0` (validated above), because `:latest` is what the maker app's `sync`
+# accessory pulls on its next `kamal accessory reboot sync`: a build that moves it ARMS that reboot
+# (cutover plan §0.3.3). So:
 #
-#   SYNC_PUSH_LATEST=0 SYNC_IMPL=rust bin/build-and-push              # :<sha>-rust; :latest untouched
-#   docker buildx imagetools create -t $REPO:latest $REPO:<sha>-rust  # promote (plan §4.2) -- and the
-#                                                                      # rollback is the same command
-#                                                                      # pointed at ruby-<R> (plan §6)
+#   SYNC_PUSH_LATEST=0 bin/build-and-push                             # :<sha>-rust; :latest untouched
+#   docker buildx imagetools create -t $REPO:latest $REPO:<sha>-rust  # promote (cutover plan §4.2)
 #
-# The default is unchanged -- `:latest` moves, as it always has -- so existing use is untouched.
-REVISION_IMAGE="$REPO:$REVISION-$SYNC_IMPL"
+# The default is unchanged -- `:latest` moves, as it always has.
+REVISION_IMAGE="$REPO:$REVISION-rust"
 TAGS=(-t "$REVISION_IMAGE")
 if [ "$PUSH_LATEST" = "1" ]; then
   TAGS+=(-t "$IMAGE")
@@ -120,7 +109,7 @@ fi
 
 docker buildx build --platform linux/amd64 -f "$DOCKERFILE" \
   --label "org.opencontainers.image.revision=$REVISION" \
-  --label "org.opencontainers.image.description=tinkerex-sync ($SYNC_IMPL)" \
+  --label "org.opencontainers.image.description=tinkerex-sync (rust)" \
   "${TAGS[@]}" --push .
 
 echo "pushed $REVISION_IMAGE ($DOCKERFILE, revision $REVISION)"

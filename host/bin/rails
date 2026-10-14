@@ -1,9 +1,0 @@
-#!/usr/bin/env ruby
-# Standard Rails binstub, for the standard reason a dummy app carries one: `bin/rails db:migrate`,
-# `bin/rails runner`, `bin/rails routes` etc. are how you interrogate this app the same way you
-# would any other -- config/ci.rb's "engine" gate does not call this directly (it drives the
-# engine's own Rakefile, per engines/tinkerex-sync/Rakefile), but a developer reaching for the
-# usual tool while working on this suite should find it here.
-APP_PATH = File.expand_path("../config/application", __dir__)
-require_relative "../config/boot"
-require "rails/commands"

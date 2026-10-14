@@ -1,5 +1,23 @@
 # Sync server (Rails) — implementation notes
 
+> **HISTORICAL — the Rails implementation, deleted from this repository in Phase 6 (2026-10-14).**
+> This describes the Ruby engine and host that served the v1 API until production cut over to the
+> Rust binary on 2026-10-07 (`docs/superpowers/plans/2026-10-07-rust-cutover.md`), and that left
+> with Phase 6 of `docs/superpowers/plans/2026-09-30-rust-rewrite.md`. Every `app/`, `lib/`,
+> `host/`, `db/` and `test/` path below, every `Sync::` class and every `bin/rails` command is gone
+> from the tree; read them where `main` last had them, `git show 36bb82e:<path>`. Read this for
+> **why** — the `next_seq!` lock-ordering argument, the statement-mode pooler hazard, the storage
+> backends' reasoning — and **not** for what runs today: that is `crates/tinkerex-sync` (its
+> README) and this repository's `CLAUDE.md`.
+>
+> **The pooler section's substance is the `doctor` subcommand now.** `tinkerex-sync doctor` runs
+> the probe `Sync::PostgresPoolerCheck` ran — one transaction, two statements that must see the
+> same backend pid, and a session advisory lock that must still be held at the second — and
+> `serve` runs it at boot on Postgres: warning by default, refusing to boot with
+> `SYNC_DB_POOLER_CHECK=refuse`, skipped with `SYNC_DB_POOLER_CHECK=skip` or
+> `DB_SKIP_POOLER_CHECK=1` (`crates/tinkerex-sync/src/services/doctor.rs`). The section's finding
+> that **nothing invokes the check** was true of the Rails host and is not true of the binary.
+
 > **Moved here from `chaim354/tinkerex` on 2026-08-25.** It was written while this engine lived in
 > that repo, so its opening line — "the Rails app *is* the sync engine's source of truth" — had
 > become false there and is true again here. Paths below are relative to THIS repository unless

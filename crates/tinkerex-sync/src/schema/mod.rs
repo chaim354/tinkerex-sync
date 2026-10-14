@@ -16,10 +16,12 @@ use crate::time::Timestamp;
 const SQLITE_DDL: &str = include_str!("sqlite.sql");
 const POSTGRES_DDL: &str = include_str!("postgres.sql");
 
-/// `host/db/migrate/` in the Rails repo: the host tables, then the engine's eight.
+/// The two migrations the Rails host ran (its `db/migrate/`, deleted with the Ruby in Phase 6): the
+/// host tables, then the engine's eight.
 pub const RAILS_SCHEMA_VERSIONS: [&str; 2] = ["20260101000001", "20260101000002"];
-/// `Digest::SHA1.hexdigest(File.read("host/db/schema.rb"))` — what Rails records in
-/// `ar_internal_metadata` when it loads that schema. Kept for fidelity of a fresh database.
+/// `Digest::SHA1.hexdigest(File.read("db/schema.rb"))` over the Rails host's schema file — what
+/// Rails records in `ar_internal_metadata` when it loads that schema. Kept for fidelity of a fresh
+/// database.
 pub const RAILS_SCHEMA_SHA1: &str = "6dfa4503bec5b6521cffadb6fc75dca91ada2c68";
 
 const OWN_MIGRATIONS_TABLE: &str = "tinkerex_sync_migrations";

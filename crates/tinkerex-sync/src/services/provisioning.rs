@@ -31,7 +31,7 @@ pub async fn register_device(
     })
 }
 
-/// The operator's `sync:device:issue`: creates the user if absent.
+/// The operator's `device issue` (the Rails host's `sync:device:issue`): creates the user if absent.
 pub async fn issue_for_email(
     db: &Db,
     email: &str,

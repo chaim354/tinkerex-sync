@@ -6,4 +6,6 @@
 # their own commit, and re-run the gates.
 [toolchain]
 channel = "1.99.0"
+# minimal, not rustup's default (~1.3 GB, mostly docs): the maker repo's bin/ci test-chunk-remote builds this crate on its runners and pays this install once per runner.
+profile = "minimal"
 components = ["rustfmt", "clippy"]

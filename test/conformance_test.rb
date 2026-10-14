@@ -51,16 +51,18 @@ class ConformanceTest < ActiveSupport::TestCase
   # mid-run, so re-parsing it per scenario would be pure waste.
   SCHEMA = JSONSchemer.schema(Pathname.new(SCHEMA_PATH))
 
-  # Sync's OWN 26 routes, drawn into a throwaway RouteSet -- built once, the same way SCHEMA is,
-  # rather than inside the coverage test itself. Deliberately NOT Rails.application.routes: this
-  # test/dummy process draws its own dev/blobs + action_cable routes alongside Sync's (see
-  # test/dummy/config/routes.rb), and recognizing a path against a superset route set would let a
-  # request that (say) accidentally matched a dev-only route pass this test's coverage check for
-  # the WRONG reason. Building a fresh RouteSet from the exact lambda the host also draws is what
-  # keeps this test honestly about Sync.draw_v1_routes and nothing else.
-  SYNC_ROUTE_SET = ActionDispatch::Routing::RouteSet.new.tap do |set|
-    set.draw { namespace(:v1) { Sync.draw_v1_routes(self) } }
-  end
+  # THE ROUTE TABLE, AS THE BINARY PRINTS IT. `tinkerex-sync routes` lists every route the server
+  # serves, one `METHOD /path` line each (path parameters spelled `:name`, as the Ruby drawer
+  # spelled them), and conformance/routes.txt is that output checked in. The Rust test
+  # crates/tinkerex-sync/tests/routes.rs fails the moment the two differ, so the file cannot drift
+  # from the binary, and the binary cannot gain a route this coverage check never hears about. It
+  # replaced Sync.draw_v1_routes, which this test drew into a throwaway RouteSet until Phase 6 of
+  # docs/superpowers/plans/2026-09-30-rust-rewrite.md deleted the Ruby. Read once, at class-
+  # definition time, the same way SCHEMA is; a MISSING file reads as no routes at all, which the
+  # coverage test refuses by name -- rather than a load error taking every scenario test down too.
+  ROUTES_PATH = File.expand_path("../conformance/routes.txt", __dir__)
+  ROUTE_LINES = (File.exist?(ROUTES_PATH) ? File.readlines(ROUTES_PATH, chomp: true) : []).freeze
+  ROUTE_LINE_RE = %r{\A(GET|POST|PUT|DELETE) (/\S*)\z}
 
   REQUEST_CLASS = {
     "GET" => Net::HTTP::Get, "POST" => Net::HTTP::Post, "PUT" => Net::HTTP::Put, "DELETE" => Net::HTTP::Delete
@@ -68,25 +70,31 @@ class ConformanceTest < ActiveSupport::TestCase
 
   SCENARIO_PATHS = Dir.glob(File.join(SCENARIOS_DIR, "*.yml")).sort.freeze
 
-  # ENDPOINTS THIS CORPUS DELIBERATELY DOES NOT EXERCISE, EACH WITH A REASON -- keyed
-  # "VERB controller#action", the same shape the coverage test derives below. Checked for
-  # staleness by the coverage test itself (a name here that Sync.draw_v1_routes no longer defines
-  # is a bug in THIS list, not a passing exception), so a route rename can't leave a stale excuse
-  # sitting here unnoticed.
+  # ROUTES THIS CORPUS DELIBERATELY DOES NOT EXERCISE, EACH WITH A REASON -- keyed exactly as
+  # conformance/routes.txt spells the route. Checked for staleness by the coverage test itself (a
+  # key here that the route list no longer names is a bug in THIS list, not a passing exception),
+  # so a route rename can't leave a stale excuse sitting here unnoticed.
   #
-  # EMPTY TODAY, ON PURPOSE, NOT A PLACEHOLDER LEFT FOR LATER: every one of the 26 routes
-  # Sync.draw_v1_routes defines is exercised by a real scenario step somewhere in conformance/
-  # scenarios/*.yml, including the ones that looked likeliest to need an exception going in --
-  # POST /v1/share_links's anonymous redeem counterpart needs no second real device or
+  # TWO ENTRIES, BOTH OUTSIDE THE SYNC WIRE, AND NEITHER A PLACEHOLDER LEFT FOR LATER: every one of
+  # the 28 /v1 routes the binary serves is exercised by a real scenario step somewhere in
+  # conformance/scenarios/*.yml, including the ones that looked likeliest to need an exception
+  # going in -- POST /v1/share_links's anonymous redeem counterpart needs no second real device or
   # out-of-band credential (a second/third DEVICE is just another self-service POST /v1/devices
   # call against the SAME user, which this corpus already relies on for N-way conflicts), neither
-  # presigned chunk-blob verb needs real object storage (STORAGE_BACKEND=local's LocalChunkStore is
-  # real HTTP PUT/GET against THIS server, not a mock), and POST /v1/admin/libraries needs no live
+  # presigned chunk-blob verb needs real object storage (STORAGE_BACKEND=local's blob tier is real
+  # HTTP PUT/GET against THIS server, not a mock), and POST /v1/admin/libraries needs no live
   # secrets vault either -- SYNC_ADMIN_TOKEN is a fixed test fixture the booted server and
-  # 11-admin.yml both agree on (see that file's own description). The mechanism stays here, empty,
-  # so the day a 27th endpoint genuinely does need one (a real S3 credential, say), it has a place
-  # to go with its own stated reason rather than a silent gap.
-  COVERAGE_EXCEPTIONS = {}.freeze
+  # 11-admin.yml both agree on (see that file's own description). Until Phase 6 this list was
+  # empty because the Ruby drawer it was checked against held only the 26 engine routes; the
+  # binary's list also carries its readiness probe and its cable endpoint, and those two are here.
+  COVERAGE_EXCEPTIONS = {
+    "GET /up" => "the readiness probe, not the sync wire: it reads the users table and answers " \
+                 "text/plain `ok`, and bin/conformance waits on it before the first scenario runs, " \
+                 "so a server that cannot answer it never reaches this corpus at all",
+    "GET /cable" => "a WebSocket upgrade, and this corpus's format is one HTTP request and one " \
+                    "response per step -- it cannot hold a subscription open; " \
+                    "crates/tinkerex-sync/tests/cable.rs drives it with the desktop client's own frames"
+  }.freeze
 
   # MINITEST RANDOMIZES TEST-METHOD EXECUTION ORDER BY DEFAULT, AND THAT IS WRONG HERE -- not a
   # style preference, a correctness bug this file shipped with. Every scenario file below runs
@@ -126,29 +134,37 @@ class ConformanceTest < ActiveSupport::TestCase
            "this list, so an empty list means this file would verify nothing while still exiting green"
   end
 
-  # COVERAGE, DERIVED FROM THE DRAWER -- NOT A HAND-WRITTEN LIST. A hand-written list of "the 26
-  # endpoints" would be a THIRD description of the same routes lib/tinkerex_sync/v1_routes.rb
-  # already exists to be the single definition of (that file's own header names exactly this
-  # failure shape for its OWN two callers: a hand-copied route list "can drift, which is the gap
-  # itself, not a decoration on it"). This test draws Sync.draw_v1_routes into a throwaway,
-  # Sync-only RouteSet -- not Rails.application.routes, which in this test/dummy process also
-  # carries the dummy's own dev/blobs + action_cable routes, which are not Sync's and not this
-  # test's business -- so a route added to the drawer is covered by this test with NO EDIT HERE:
-  # it either turns up recognized against some scenario step's own request, or it doesn't, and
-  # the failure names it by controller#action.
+  # COVERAGE, DERIVED FROM THE BINARY'S OWN ROUTE LIST -- NOT A LIST KEPT HERE. A hand-written list
+  # of "the routes" in this file would be one more description of the route table that can drift
+  # from it, which is the gap itself, not a decoration on it. conformance/routes.txt is the
+  # binary's own output, pinned to it by a Rust test (ROUTES_PATH above), so a route added to the
+  # server is covered by this test with NO EDIT HERE: some scenario step's request either reaches
+  # it or none does, and the failure names it.
   #
   # NO SERVER NEEDED, and always runs (never skips) -- same as "the corpus has at least one
-  # scenario file" above. Recognizing a path is pure routing, not an HTTP call: this test reads
-  # every scenario file's REQUESTS ONLY (never `expect:`) and asks the route set what
-  # controller#action each would dispatch to, entirely offline.
-  test "every route Sync.draw_v1_routes defines is exercised by at least one scenario" do
-    drawn = SYNC_ROUTE_SET.routes.each_with_object({}) do |route, out|
-      out["#{route.verb} #{route.defaults[:controller]}##{route.defaults[:action]}"] = route
+  # scenario file" above. Matching a request to a route is string work, not an HTTP call: this
+  # test reads every scenario file's REQUESTS ONLY (never `expect:`) and asks which listed route
+  # each one would reach, entirely offline.
+  #
+  # AN EMPTY LIST IS REFUSED BEFORE IT IS TRUSTED. `uncovered` below is the list minus whatever the
+  # scenarios reach, and an empty list minus anything is empty: a truncated or missing routes.txt
+  # would let this test pass while checking nothing -- the way the engine's own architecture guards
+  # once passed over a glob that had stopped matching any file at all. A line that does not parse
+  # as `METHOD /path` is refused for the same reason: skipped, it would shrink the list silently.
+  # Both are `flunk` preconditions, like run_scenario's schema check below: they count toward
+  # Minitest's assertion total only when they fire.
+  test "every route the binary prints is exercised by at least one scenario" do
+    if ROUTE_LINES.empty?
+      flunk "#{ROUTES_PATH} is missing or lists no routes -- regenerate it with " \
+            "`cargo run -q -p tinkerex-sync -- routes > conformance/routes.txt`. This test checks " \
+            "every scenario against that list, so an empty one would pass while checking nothing."
     end
+    malformed = ROUTE_LINES.grep_v(ROUTE_LINE_RE)
+    flunk "#{ROUTES_PATH}: lines that are not `METHOD /path`: #{malformed.inspect}" if malformed.any?
 
-    stale = COVERAGE_EXCEPTIONS.keys - drawn.keys
+    stale = COVERAGE_EXCEPTIONS.keys - ROUTE_LINES
     assert stale.empty?,
-           "COVERAGE_EXCEPTIONS names endpoint(s) Sync.draw_v1_routes no longer defines -- the " \
+           "COVERAGE_EXCEPTIONS names route(s) conformance/routes.txt no longer lists -- the " \
            "route was renamed or removed, so this exception (and its stated reason) is stale and " \
            "must be updated or dropped: #{stale.join(', ')}"
 
@@ -156,15 +172,15 @@ class ConformanceTest < ActiveSupport::TestCase
     SCENARIO_PATHS.each do |scenario_path|
       YAML.load_file(scenario_path).fetch("steps").each do |step|
         request = step.fetch("request")
-        endpoint = recognize_endpoint(method: request.fetch("method"), path: request.fetch("path"))
-        covered << endpoint if endpoint
+        route = route_for(method: request.fetch("method"), path: request.fetch("path"))
+        covered << route if route
       end
     end
 
-    uncovered = drawn.keys - covered.to_a - COVERAGE_EXCEPTIONS.keys
+    uncovered = ROUTE_LINES - covered.to_a - COVERAGE_EXCEPTIONS.keys
     assert uncovered.empty?,
-           "no scenario step exercises: #{uncovered.sort.join(', ')} -- add a step that calls " \
-           "it, or add it to COVERAGE_EXCEPTIONS (test/conformance_test.rb) with a reason"
+           "no scenario step exercises: #{uncovered.join(', ')} -- add a step that calls it, or " \
+           "add it to COVERAGE_EXCEPTIONS (test/conformance_test.rb) with a reason"
   end
 
   # ONE TEST PER SCENARIO FILE, not one test for the whole corpus and not one test per step. Per
@@ -200,45 +216,53 @@ class ConformanceTest < ActiveSupport::TestCase
   # A bare "{{name}}" path is schema.json's OTHER accepted shape for request.path -- its own
   # comment names exactly one reason it exists: "a presigned chunk-upload/download URL (PUT/GET
   # /v1/chunks/blob/:user_id/:hash)... there is no server-supplied field for the exp/sig query
-  # params separately". So a PUT there is unambiguously chunks/blob#upload and a GET is
-  # chunks/blob#download, by construction, not by guessing from the captured name -- and that
-  # holds regardless of which endpoint MINTED the URL: a share-download-minted URL
-  # (10-share-links.yml) hits this identical route via the identical
-  # Sync::Storage::LocalChunkStore#presign_get a chunks#download-minted one does.
+  # params separately". So a PUT there is unambiguously the blob upload and a GET the blob
+  # download, by construction, not by guessing from the captured name -- and that holds regardless
+  # of which endpoint MINTED the URL: a share-download-minted URL (10-share-links.yml) reaches this
+  # identical route through the identical local-tier presign a chunks/download-minted one does.
   BLOB_PLACEHOLDER_RE = /\A\{\{\w+\}\}\z/
+  BLOB_ROUTES = {
+    "PUT" => "PUT /v1/chunks/blob/:user_id/:hash", "GET" => "GET /v1/chunks/blob/:user_id/:hash"
+  }.freeze
 
-  # "VERB controller#action" for one scenario step's request, recognized against SYNC_ROUTE_SET --
-  # or nil when the path is not one of Sync's 26 routes at all. That "nil, not a failure" case is
-  # deliberate and covers two real things this corpus's own requests do: call a HOST route this
-  # engine does not draw (POST /v1/devices, GET /v1/devices/whoami -- enrolment and the extra
-  # devices 04/07/08 mint), which is not Sync.draw_v1_routes' concern and so not this coverage
-  # check's either; and the bare-placeholder shape above, handled first and separately because
-  # recognize_path cannot resolve a literal "{{name}}" string at all (this test runs with no
-  # server, so there is nothing to interpolate it from even if it wanted to).
-  def recognize_endpoint(method:, path:)
+  # The conformance/routes.txt line one scenario step's request would reach -- or nil when it
+  # reaches none (no step in the corpus does that today; one that did would be probing an unknown
+  # path, which is a scenario's own business and not this coverage check's). The bare-placeholder
+  # shape above is handled first and separately, because a literal "{{name}}" is not a path at all
+  # (this test runs with no server, so there is nothing to interpolate it from even if it wanted to).
+  #
+  # A {{name}} placeholder EMBEDDED in an otherwise-literal path (e.g. a captured sibling's node_id
+  # in 07-conflicts.yml's last two steps) is swapped for a fixed dummy segment, because a `:param`
+  # segment accepts any non-empty, non-slash text: the SHAPE matches identically whether or not the
+  # real value is knowable at this offline point. When more than one route matches, the one with
+  # the most literal segments wins -- the server's own router's rule (a static segment beats a
+  # parameter), so `POST /v1/nodes/symlink` is never counted as a parameterised sibling.
+  def route_for(method:, path:)
     verb = method.upcase
 
     if BLOB_PLACEHOLDER_RE.match?(path)
-      action = { "PUT" => "upload", "GET" => "download" }[verb]
+      route = BLOB_ROUTES[verb]
       # Neither of the two verbs this shape can mean -- a POST/DELETE to a bare {{name}} path
       # would be a genuinely new, uncovered request shape, not a routing question this method can
-      # silently shrug off as "not Sync's".
-      raise "recognize_endpoint: #{verb} to a bare {{name}} path -- not one of the two presigned " \
+      # silently shrug off.
+      raise "route_for: #{verb} to a bare {{name}} path -- not one of the two presigned " \
             "chunk-blob verbs (PUT upload / GET download); either this scenario step is miscoded " \
-            "or schema.json's own documented reason for this path shape has changed" unless action
-      return "#{verb} sync/v1/chunks/blob##{action}"
+            "or schema.json's own documented reason for this path shape has changed" unless route
+      return route
     end
 
-    # A {{name}} placeholder EMBEDDED in an otherwise-literal path (e.g. a captured sibling's
-    # node_id in 07-conflicts.yml's last two steps) is swapped for a fixed dummy segment --
-    # Rails' default dynamic-segment matcher (:node_id, :id, :token, ...) accepts any non-slash
-    # text there, so the SHAPE recognizes identically whether or not the real value is knowable
-    # at this offline, server-less point.
-    routable_path = path.gsub(/\{\{\w+\}\}/, "x")
-    match = SYNC_ROUTE_SET.recognize_path(routable_path, method: verb)
-    "#{verb} #{match[:controller]}##{match[:action]}"
-  rescue ActionController::RoutingError
-    nil
+    segments = path.gsub(/\{\{\w+\}\}/, "x").split("/", -1)
+    matches = ROUTE_LINES.filter_map do |line|
+      route_verb, route_path = line.split(" ", 2)
+      next unless route_verb == verb && route_path
+
+      pattern = route_path.split("/", -1)
+      next unless pattern.size == segments.size
+      next unless pattern.zip(segments).all? { |want, got| want.start_with?(":") ? !got.empty? : want == got }
+
+      [ pattern.count { |segment| !segment.start_with?(":") }, line ]
+    end
+    matches.max_by(&:first)&.last
   end
 
   # Validates, then executes every step in order against ENV["SYNC_SERVER_URL"], sharing ONE

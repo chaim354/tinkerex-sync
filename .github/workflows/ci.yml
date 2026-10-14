@@ -18,11 +18,14 @@ on:
   pull_request:
 
 jobs:
+  # Every job: never a fork -- runs on self-hosted runners (the same guard as chaim354/tinkerex).
+
   # THE RUST SERVER. The runner already carries rustup (it builds chaim354/tinkerex-client), and
   # rust-toolchain.toml pins the version every cargo call here uses; nothing is installed beyond
   # cargo-deny, idempotently, because the box is persistent.
   rust-check:
     runs-on: [ self-hosted, macos ]
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
 
@@ -54,6 +57,7 @@ jobs:
   # outside the server's own language (conformance/README.md, "Why this corpus exists").
   conformance:
     runs-on: [ self-hosted, macos ]
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
 

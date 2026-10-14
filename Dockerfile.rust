@@ -11,7 +11,10 @@
 # STORAGE_BACKEND=local, every chunk byte -- the volume declared there mounts over it unchanged.
 # uid 1000, so a volume the Ruby container populated is writable here too.
 
-FROM docker.io/library/rust:1-bookworm AS build
+# Same toolchain as rust-toolchain.toml, which pins every cargo run in this checkout (CI's
+# rust-check included) but is not copied in here -- so this tag is the image's pin, not a floating
+# `rust:1`. Bump the two together.
+FROM docker.io/library/rust:1.99.0-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates

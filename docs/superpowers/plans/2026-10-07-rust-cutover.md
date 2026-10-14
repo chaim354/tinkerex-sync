@@ -212,6 +212,44 @@ ssh to the box, 1Password service account), the day this plan merged:
   first thing), §6 (not needed so far). **Rollback stays:** `ruby-$R` resolves at the origin and sits
   on the box; use a fresh push if a retag does not persist, and verify the pull on the box first.
 
+**§5, the watch week (2026-10-07 18:22 UTC → 2026-10-14):** measured 2026-10-14 ~02:00 UTC, at the
+end of the sixth day (the week itself ends 2026-10-14 18:22 UTC). The accessory ran the Rust binary
+(`tinkerex-sync serve`, revision `38931307…`, `:latest` = `9409d6ce…`) throughout, with the
+scheduler off: nothing in its env sets `SYNC_SCHEDULER`. The table is the maker repo's
+`docs/superpowers/specs/2026-10-13-e-cutover-finish-design.md`, verbatim; its "today" is 2026-10-14.
+
+| check (cutover plan §5) | result |
+|---|---|
+| nightly `sync` backups | six, 2026-10-08 → 10-13, all `status=0`, 16 KB each, `bin/backup-status` |
+| accessory log, 150 h, `ERROR` or `response failed` | none |
+| maker app log, 150 h, `FileLayer::FetchError` | none |
+| `stats --brief` | 13 nodes / 4 versions at the swap → 20 nodes / 7 versions today |
+| volume `tinkerex_sync_storage` | 982 kB |
+| `gc reap-pending --dry-run` / `reap-storage --dry-run` / `retention --dry-run` | 0 / 0 / 0 (retention is `KeepAll`) |
+| rollback | never needed; `ruby-4148fcd6…` still resolves and sits on the box |
+| maker deploys against it this week | three (F, D1 twice counted once as #358), each probed, none with a FetchError |
+
+- **§2.1's `sqlite3` held from the first night.** The 2026-10-08 archive, which the "Not run" line
+  above named as its real test, is the first of the six; finding 0.3.1 is closed by measurement.
+- **The three maker deploys:** F on 2026-10-13, D1 on 2026-10-13/14 — each probed, none with a
+  `FileLayer::FetchError`.
+- **The dry-runs came in under §5's expectation** ("a handful of expired pending commits at most"):
+  nothing to reap, no storage orphan, nothing from retention. So D3 — the maker PR adding
+  `SYNC_SCHEDULER: "1"` under the accessory's `env.clear` — is merged and rebooted at the week's
+  end. Its proof is the next morning's
+  `bin/kamal accessory logs sync --since 24h --grep reap-pending`: the binary runs `reap-pending`
+  hourly at :30 (`crates/tinkerex-sync/src/scheduler.rs`).
+- **Not run by hand:** §5.4's manual file round-trip through the maker UI. The node count grew
+  through ordinary use instead (13 → 20).
+- **The rollback window stays open.** §6 was never needed; Phase 6 (the rewrite plan's §9) waits
+  for the operator to close it.
+- **The same PR closes the readiness audit's footgun** (maker `docs/AUDIT-2026-10-12-readiness.md`
+  §2.4.2): a bare `bin/build-and-push` built the Ruby image and moved `:latest`, so a bare run
+  followed by `bin/kamal accessory reboot sync` rolled production back to Ruby silently. A bare run
+  now builds the Rust image; `SYNC_IMPL=ruby` rebuilds the rollback image until Phase 6.
+  `Dockerfile.rust` builds on `rust:1.99.0-bookworm`, the toolchain `rust-toolchain.toml` pins for
+  CI, no longer a floating `rust:1`.
+
 ---
 
 ## 1. Decisions for the operator (settle before Phase A)

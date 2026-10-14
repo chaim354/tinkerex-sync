@@ -1,6 +1,9 @@
 # tinkerex-sync
 
-A local-first file sync engine, as a mountable Rails engine.
+A local-first file sync engine, which production has run as the Rust binary under
+`crates/tinkerex-sync` since 2026-10-07 (see [its README](crates/tinkerex-sync/README.md)). The
+mountable Rails engine and `host/` app described below are the retiring implementation, kept as the
+rollback target until Phase 6 of `docs/superpowers/plans/2026-09-30-rust-rewrite.md` deletes them.
 
 Files are split into content-defined chunks (FastCDC), content-addressed and deduped. A commit is
 an immutable version pointing at a chunk manifest; devices converge by pulling a per-user

@@ -36,10 +36,12 @@ Project context for an AI coding agent (Claude Code) and human developers.
    same wire from the same image paths and env; the corpus grades it (`bin/conformance-rust`:
    `18 runs, 284 assertions, 0 failures, 0 skips`, the Ruby host's own figure); its README lists
    the cargo gates and the two legs CI cannot run. **Until Phase 6 of that plan, a change to
-   endpoint behaviour moves three things: the Ruby, the Rust, and the corpus.** The Ruby host is
-   still what production runs; `Dockerfile.rust` and `SYNC_IMPL=rust bin/build-and-push` are the
-   cutover's image. **The cutover itself -- a retag of one image and a reboot of one container,
-   rehearsed first on a throwaway volume, rolled back by the reverse retag -- is
+   endpoint behaviour moves three things: the Ruby, the Rust, and the corpus.** **Production has
+   run the Rust binary since 2026-10-07** (`Dockerfile.rust`'s image; the watch week is recorded
+   in the cutover plan's §0.5); the Ruby host is the rollback target until Phase 6, and
+   `bin/build-and-push` builds Rust by default (`SYNC_IMPL=ruby` rebuilds the rollback image).
+   **The cutover itself -- a retag of one image and a reboot of one container, rehearsed first on
+   a throwaway volume, rolled back by the reverse retag -- is
    `docs/superpowers/plans/2026-10-07-rust-cutover.md`.** Read its §0 before touching
    `Dockerfile.rust`, `bin/build-and-push`, or the maker repo's `sync` accessory: it names three
    things the rewrite plan assumed wrongly (no `sqlite3` in the image, no door for devices, a
@@ -313,8 +315,9 @@ exactly the obligations §4c names — nothing more:
 | `limits_concurrency` | **solid_queue's extension, not core ActiveJob** — `Sync::RetentionJob` calls it. The gemspec deliberately does not depend on solid_queue; the host picks its queue adapter. |
 | `config/routes.rb` calling `Sync.draw_v1_routes` | The engine is a **drawer, not a mount** (§4c). |
 
-`host/` is what `bin/build-and-push` packages, what the `sync` Kamal accessory runs, and what the
-maker app's `bin/sync-server` boots for `bin/ci test-chunk-remote` over there.
+`host/` is what `SYNC_IMPL=ruby bin/build-and-push` packages — the rollback image; the `sync` Kamal
+accessory has run the Rust binary since 2026-10-07 (§0.4) — and what the maker app's
+`bin/sync-server` boots under `SYNC_IMPL=ruby`.
 
 **`test/dummy` is a THIRD app and is not `host/`.** It is a minimal host whose whole job is to
 prove the engine boots in a process that has never loaded a maker layer — which is the only thing

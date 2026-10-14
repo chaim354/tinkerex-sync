@@ -437,7 +437,7 @@ back from a `docker inspect`.
 - [x] **7.2 Backup the live accessory** (`bin/backup-db sync`), verify the archive's counts.
   **2026-10-07 18:07 UTC:** `tinkerex-sync-20261007T180753Z.tar.gz`, `integrity_check ok`, 7 nodes;
   live `7 nodes, 3 versions` by `bin/rails runner` on the Ruby host.
-- [ ] **7.3 Swap.** Retag: `:latest` → the Rust revision; `bin/kamal accessory reboot sync` from the
+- [x] **7.3 Swap.** Retag: `:latest` → the Rust revision; `bin/kamal accessory reboot sync` from the
   maker repo (its `deploy.yml` is unchanged). Probes, in order: `/up` 200; `whoami` with an
   **existing** maker user's token (`users.sync_device_token` there — proves token compatibility on
   real credentials); a maker-app write journey (mkdir, upload, rename, delete, restore) through
@@ -462,9 +462,11 @@ back from a `docker inspect`.
   (Ruby, minutes earlier: `404 Not Found` on connect, no nudge, `Disconnected`, the 2 s poll);
   share link: create 201, anonymous redeem 200, download POST 200, presigned GET byte-exact.
   In-flight blob URLs: not run (none minted before the swap). Deploy record tinkerex#328.
-- [ ] **7.4 Watch for one week** with the scheduler **off**. Then `gc reap-pending --dry-run` and
+- [x] **7.4 Watch for one week** with the scheduler **off**. Then `gc reap-pending --dry-run` and
   `gc reap-storage --dry-run` against production, read the lists, and only then enable
   `--scheduler` (retention stays `keep_all`; it prunes nothing and sweeps nothing).
+  **2026-10-14:** the week and its three dry-runs (0 / 0 / 0) are the cutover plan's §0.5 entry
+  "§5, the watch week"; D3 = the maker PR adding `SYNC_SCHEDULER: "1"`, merged at the week's end.
 - [ ] **7.5 Rollback if needed:** retag `:latest` to the last Ruby revision, reboot the accessory.
   Safe because of D2; proven by 7.1. Rows written by Rust are ordinary rows to Rails.
 

@@ -42,7 +42,12 @@ enum Command {
         migrate: bool,
         /// Run the maintenance jobs in-process (reap-pending hourly, retention nightly,
         /// reap-storage weekly). Off by default: turn it on only after reading the dry-runs.
-        #[arg(long, env = "SYNC_SCHEDULER")]
+        /// SYNC_SCHEDULER takes 1/0, yes/no, true/false, on/off: clap's plain bool parser took only
+        /// true/false, and `SYNC_SCHEDULER=1` -- the value this crate's own README documented and
+        /// the cutover plan prescribed -- put production in a restart loop on 2026-10-14
+        /// (`invalid value '1' for '--scheduler'`). `--scheduler` alone still means on.
+        #[arg(long, env = "SYNC_SCHEDULER", value_parser = clap::builder::BoolishValueParser::new(),
+              num_args = 0..=1, default_missing_value = "true", default_value = "false")]
         scheduler: bool,
     },
     /// Create the schema on a fresh database, or adopt a Rails-created one.
@@ -475,4 +480,52 @@ async fn doctor() -> anyhow::Result<()> {
         anyhow::bail!("doctor found a problem");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod scheduler_flag_tests {
+    use super::*;
+    use clap::Parser;
+
+    fn scheduler_of(args: &[&str]) -> bool {
+        match Cli::try_parse_from(args).expect("parses").command {
+            Command::Serve { scheduler, .. } => scheduler,
+            _ => unreachable!("serve is the only subcommand parsed here"),
+        }
+    }
+
+    // ONE test, sequential on purpose: SYNC_SCHEDULER is process-global and clap reads it at
+    // parse time, so two tests touching it would race.
+    #[test]
+    fn scheduler_flag_takes_every_boolish_spelling_and_defaults_off() {
+        unsafe { std::env::remove_var("SYNC_SCHEDULER") };
+        assert!(!scheduler_of(&["tinkerex-sync", "serve"]), "off by default");
+        assert!(
+            scheduler_of(&["tinkerex-sync", "serve", "--scheduler"]),
+            "bare flag means on"
+        );
+        assert!(!scheduler_of(&[
+            "tinkerex-sync",
+            "serve",
+            "--scheduler=false"
+        ]));
+        for (value, expected) in [
+            ("1", true),
+            ("0", false),
+            ("true", true),
+            ("false", false),
+            ("yes", true),
+            ("no", false),
+            ("on", true),
+            ("off", false),
+        ] {
+            unsafe { std::env::set_var("SYNC_SCHEDULER", value) };
+            assert_eq!(
+                scheduler_of(&["tinkerex-sync", "serve"]),
+                expected,
+                "SYNC_SCHEDULER={value}"
+            );
+        }
+        unsafe { std::env::remove_var("SYNC_SCHEDULER") };
+    }
 }

@@ -235,7 +235,7 @@ scheduler off: nothing in its env sets `SYNC_SCHEDULER`. The table is the maker 
   `FileLayer::FetchError`.
 - **The dry-runs came in under §5's expectation** ("a handful of expired pending commits at most"):
   nothing to reap, no storage orphan, nothing from retention. So D3 — the maker PR adding
-  `SYNC_SCHEDULER: "1"` under the accessory's `env.clear` — is merged and rebooted at the week's
+  `SYNC_SCHEDULER: "true"` under the accessory's `env.clear` — is merged and rebooted at the week's
   end. Its proof is the next morning's
   `bin/kamal accessory logs sync --since 24h --grep reap-pending`: the binary runs `reap-pending`
   hourly at :30 (`crates/tinkerex-sync/src/scheduler.rs`).
@@ -249,6 +249,25 @@ scheduler off: nothing in its env sets `SYNC_SCHEDULER`. The table is the maker 
   now builds the Rust image; `SYNC_IMPL=ruby` rebuilds the rollback image until Phase 6.
   `Dockerfile.rust` builds on `rust:1.99.0-bookworm`, the toolchain `rust-toolchain.toml` pins for
   CI, no longer a floating `rust:1`.
+
+- **D3 APPLIED, 2026-10-14 09:03 UTC — WITH AN OUTAGE THIS PLAN CAUSED.** The maker repo's #395
+  merged `SYNC_SCHEDULER: "1"`, the value §5 above prescribed (and this crate's README documented).
+  The binary's `--scheduler` is a clap `bool` read from that env, and clap's plain bool parser takes
+  only `true`/`false`: `kamal accessory reboot sync` re-created the container, which exited 2 with
+  `invalid value '1' for '--scheduler'` and restarted in a loop; kamal-proxy's health wait timed out
+  (30 s) and removed the service, so a second `reboot` (config hot-fixed to `"true"`) died at its
+  proxy-remove step — "service not found", the 2026-10-07 shape again — without re-creating the
+  container. **Recovery:** `docker rm tinkerex-sync` (the named volume untouched) and `bin/kamal
+  accessory boot sync` from the corrected config: `scheduler on: reap-pending hourly, retention
+  nightly, reap-storage weekly`, next runs logged (`reap-pending` 09:30 UTC, `retention` 03:15,
+  `reap-storage` Sunday 04:15), `/up` 200 through both proxy names at 09:03:05 UTC. Down for about
+  two and a half minutes (≈09:00:30 → 09:03:05). The maker app saw the gap only as the pull job's
+  next tick. Fixes: `"true"` committed in the maker repo (its hygiene test pins the exact value), and
+  `--scheduler` now parses `1`/`0`, `yes`/`no`, `on`/`off`, `true`/`false` (`BoolishValueParser`, unit
+  test in `main.rs`), so the documented value and an operator's intuition both work. Lesson for the
+  next env knob: **drive the exact value through the binary before it reaches a plan**, and never
+  `reboot` an accessory whose proxy service may already be gone — `boot` after `docker rm` is the
+  recovery, as it was on 10-07.
 
 ---
 
@@ -269,7 +288,7 @@ scheduler off: nothing in its env sets `SYNC_SCHEDULER`. The table is the maker 
   with no behaviour change beyond the share-link `expires_at` fix merged in #16.
 - **D3 — The scheduler.** Keep it **off** through the watch week (the Ruby host never ran these
   jobs in production either). Enable it only after the dry-runs in §5.3, with a maker PR adding
-  `SYNC_SCHEDULER: "1"` to the accessory env.
+  `SYNC_SCHEDULER: "true"` to the accessory env.
 - **D4 — Flipping `bin/sync-server`'s default to `rust`.** Defer to §9 (decommission). The maker
   repo's CI runners are Linux containers (`ci/runner/Dockerfile`) with no cargo; the flip would
   make `bin/ci test-chunk-remote` try to build the binary there. Not part of the cutover.
@@ -625,7 +644,7 @@ bin/kamal accessory exec sync --reuse "tinkerex-sync gc retention --dry-run"    
 ```
 
 Read the lists. Expected: a handful of expired pending commits at most, no storage orphans that a
-row still names, nothing from retention. Only then **D3**: a maker PR adding `SYNC_SCHEDULER: "1"`
+row still names, nothing from retention. Only then **D3**: a maker PR adding `SYNC_SCHEDULER: "true"`
 under the accessory's `env.clear`, `bin/secrets-preflight`, `bin/kamal accessory reboot sync`, and
 the next morning's log shows `reap-pending` ran at :30. Tick §7.4.
 

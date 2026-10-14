@@ -36,7 +36,7 @@ The **same names the Rails host read**, so the accessory's env block changes by 
 | `SYNC_ADMIN_TOKEN` | blank = `POST /v1/admin/libraries` answers 503, never a boot refusal |
 | `SYNC_VERIFY_FINALIZE` | default on: finalize HEADs first-seen chunks |
 | `RETENTION_POLICY` = `keep_all` \| `tiered` | default `keep_all` |
-| `SYNC_SCHEDULER=1` (or `serve --scheduler`) | reap-pending hourly at :30, retention 03:15 UTC, reap-storage Sundays 04:15 UTC; off by default |
+| `SYNC_SCHEDULER=true` (or `1`/`yes`/`on`; or `serve --scheduler`) | reap-pending hourly at :30, retention 03:15 UTC, reap-storage Sundays 04:15 UTC; off by default |
 | `SYNC_DB_POOLER_CHECK` = `warn` (default) \| `refuse` \| `skip`; `DB_SKIP_POOLER_CHECK=1` | the Postgres statement-mode pooler probe at boot |
 | `RUST_LOG` / `RAILS_LOG_LEVEL`, `SYNC_LOG_JSON=1` | logging |
 | `BIND`, `PORT` | `serve` defaults `0.0.0.0:3000` |

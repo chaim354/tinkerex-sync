@@ -466,7 +466,7 @@ back from a `docker inspect`.
   `gc reap-storage --dry-run` against production, read the lists, and only then enable
   `--scheduler` (retention stays `keep_all`; it prunes nothing and sweeps nothing).
   **2026-10-14:** the week and its three dry-runs (0 / 0 / 0) are the cutover plan's §0.5 entry
-  "§5, the watch week"; D3 = the maker PR adding `SYNC_SCHEDULER: "1"`, merged at the week's end.
+  "§5, the watch week"; D3 = the maker PR adding `SYNC_SCHEDULER: "true"`, merged at the week's end.
 - [ ] **7.5 Rollback if needed:** retag `:latest` to the last Ruby revision, reboot the accessory.
   Safe because of D2; proven by 7.1. Rows written by Rust are ordinary rows to Rails.
 

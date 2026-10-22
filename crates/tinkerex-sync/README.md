@@ -4,19 +4,20 @@ The sync server as one binary: the chunk, version and changelog engine behind th
 colocated blob tier, the Action Cable nudge, and the operator subcommands that replaced the Rails
 host's rake tasks. It is the only implementation since Phase 6 of
 `docs/superpowers/plans/2026-09-30-rust-rewrite.md` deleted the Ruby, and it is graded against
-`../../conformance/` — sixteen recorded scenario files, verified by `test/conformance_test.rb` from
+`../../conformance/` — seventeen recorded scenario files, verified by `test/conformance_test.rb` from
 outside this crate's own language — never against ported Ruby tests (that plan says why).
 
 ```sh
 cargo build --release -p tinkerex-sync
 target/release/tinkerex-sync --help
 
-tinkerex-sync migrate                        # create the Rails-shaped schema, or adopt a Rails file
+tinkerex-sync migrate                        # create the Rails-shaped schema or adopt a Rails file, then apply own migrations
 tinkerex-sync serve --port 3000              # serve --migrate does both; --scheduler runs the jobs
 tinkerex-sync device issue --email a@b.c     # prints user_id:/device_id:/device_token: as the rake task did
-tinkerex-sync device list  --email a@b.c
+tinkerex-sync device list  --email a@b.c     # id, name, last seen, kind (library credential / minted by N), live / idled out / revoked
+tinkerex-sync device revoke --id N           # revoke a device and all it minted -- the one way to revoke a library credential
 tinkerex-sync stats [--brief]                # what bin/backup-db and bin/restore-db (maker repo) parse
-tinkerex-sync routes                         # the 29 HTTP routes + /cable = conformance/routes.txt
+tinkerex-sync routes                         # the 30 HTTP routes + /cable = conformance/routes.txt
 tinkerex-sync doctor                         # config, schema presence, the Postgres pooler probe
 tinkerex-sync gc retention    [--grace 3600] [--user N] [--dry-run]
 tinkerex-sync gc reap-pending [--ttl-hours 24]   [--user N] [--dry-run]
@@ -35,6 +36,7 @@ The **same names the Rails host read**, so the accessory's env block changes by 
 | `CHUNK_BUCKET`, `CHUNK_ENDPOINT`, `CHUNK_REGION` (default `auto`), `CHUNK_ACCESS_KEY_ID`, `CHUNK_SECRET_ACCESS_KEY` | the s3 store, path-style, presigned SigV4 |
 | `SECRET_KEY_BASE` | required; HMAC key of the local blob URLs — keep the Rails value so URLs in flight stay valid |
 | `SYNC_ADMIN_TOKEN` | blank = `POST /v1/admin/libraries` answers 503, never a boot refusal |
+| `DEVICE_IDLE_DAYS` | default 90, `0` = off, a non-number = the default: a DEVICE credential (one `POST /v1/devices` minted) unused that long stops authenticating; library credentials never idle out. The maker app's variable and rule; not in the Rails host's list, which predates it |
 | `SYNC_VERIFY_FINALIZE` | default on: finalize HEADs first-seen chunks |
 | `RETENTION_POLICY` = `keep_all` \| `tiered` | default `keep_all` |
 | `SYNC_SCHEDULER=true` (or `1`/`yes`/`on`; or `serve --scheduler`) | reap-pending hourly at :30, retention 03:15 UTC, reap-storage Sundays 04:15 UTC; off by default |
@@ -60,6 +62,10 @@ Every row this binary writes is an ordinary row to Rails, and vice versa:
 - **Mode defaults** 493 (dir) / 420 (file) / 511 (symlink); `updated_at` moves on every node write;
   `versions` has no `updated_at`; `versions.created_at` is the tiered policy's clock.
 - **Tokens** are 32 random bytes, base64url without padding (43 chars), stored as SHA-256 hex.
+- **Own migrations** (`schema::OWN_MIGRATIONS`, recorded in `tinkerex_sync_migrations`) only ADD
+  nullable columns: `20261022000001` adds `devices.issuer_device_id` (NULL = a library credential)
+  and `devices.revoked_at`. The Ruby image would still boot on the file, but it reads neither, so
+  a rollback to it re-admits every revoked token.
 - **Blob URLs** are `{base}/v1/chunks/blob/{user}/{hash}?exp=&sig=` with
   `sig = hex(HMAC-SHA256(SECRET_KEY_BASE, "user\nhash\nexp"))` — known-answer tested against Ruby's
   OpenSSL.
@@ -76,6 +82,11 @@ Every row this binary writes is an ordinary row to Rails, and vice versa:
   `gc::referenced_version_ids` protects open conflicts' sides and live share links' versions.
 - The two reapers keep deliberately different pending guards (`services/reapers.rs` explains).
 - The read services cost a constant number of statements (`tests/query_budget.rs`).
+- Every device-token door admits through `auth::admit_token` — revoked or idled out is the 401 an
+  unknown token gets — and `/cable` re-admits its open socket on a timer and is cut on a
+  revocation (`tests/devices.rs`, `tests/cable.rs`). The revoke door's rule and its cascade are
+  `services::revocation`; a mint takes the same user lock, so it cannot slip a live child under a
+  device being revoked.
 
 Each of these has a mutation check on record in the commit history (the guard was broken, the
 test went red, the guard was restored).
@@ -103,6 +114,10 @@ the figure the Ruby host reported on a fresh database; the whole `cargo test` su
 Postgres; and `s3_roundtrip` passes against a SeaweedFS 4.48 binary (store verbs, presigned PUT
 and GET, a commit whose finalize verifies against the bucket). Re-measured 2026-10-14, with the
 Ruby deleted (Phase 6), on SQLite only — the operator's Mac has no Postgres: the same corpus line.
+Re-measured 2026-10-22 with the revoke door and its scenario (tinkerex#473): `19 runs, 314
+assertions, 0 failures, 0 errors, 0 skips` on SQLite, and the same on Postgres 16.14 run in a local
+`postgres:16` container, where the whole `cargo test` suite (123 tests) passes too. The s3 leg was
+not re-run: nothing in that change touches the store.
 
 The image, built for the box's platform and smoke-tested locally, **without pushing** (the cutover
 plan's §2.1). `sqlite3` must be present: the maker repo's backup and restore run it inside this

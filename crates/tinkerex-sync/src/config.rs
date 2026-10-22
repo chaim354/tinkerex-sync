@@ -45,6 +45,31 @@ pub struct Config {
     /// `SYNC_VERIFY_FINALIZE`, default on: finalize HEADs storage for first-seen chunks.
     pub verify_finalize: bool,
     pub retention: RetentionMode,
+    /// `DEVICE_IDLE_DAYS`: a DEVICE credential unused for this many days stops authenticating;
+    /// `None` is off. `auth` says which credentials it covers.
+    pub device_idle_days: Option<i64>,
+    /// How often an open `/cable` socket re-reads its device: what cuts a socket the operator's
+    /// `device revoke` (another process, so no in-process signal) or idle expiry ended, and what
+    /// keeps a connected device's `last_seen_at` moving. Not an environment knob; the tests
+    /// shorten it.
+    pub cable_recheck: std::time::Duration,
+}
+
+/// The maker app's own default (`Device::IDLE_DAYS_DEFAULT`).
+pub const DEVICE_IDLE_DAYS_DEFAULT: i64 = 90;
+/// Past this many days a limit means nothing, and a larger one would overflow the date arithmetic.
+const DEVICE_IDLE_DAYS_MAX: i64 = 1_000_000;
+pub const CABLE_RECHECK_DEFAULT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The maker app's `Device.idle_limit`, rule for rule, because the two read the same variable:
+/// `0` keeps every token forever; a value that is not a whole, non-negative number of days is a
+/// typo and falls back to the default, never to "forever" (which would turn expiry off silently).
+pub fn device_idle_days(raw: Option<&str>) -> Option<i64> {
+    let days = raw
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|d| *d >= 0)
+        .unwrap_or(DEVICE_IDLE_DAYS_DEFAULT);
+    (days > 0).then_some(days.min(DEVICE_IDLE_DAYS_MAX))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -144,6 +169,8 @@ impl Config {
             admin_token: present(get("SYNC_ADMIN_TOKEN")),
             verify_finalize,
             retention,
+            device_idle_days: device_idle_days(get("DEVICE_IDLE_DAYS").as_deref()),
+            cable_recheck: CABLE_RECHECK_DEFAULT,
         })
     }
 }
@@ -206,6 +233,29 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn device_idle_days_reads_the_way_the_maker_app_reads_it() {
+        assert_eq!(device_idle_days(None), Some(90), "unset is the default");
+        assert_eq!(device_idle_days(Some("")), Some(90), "blank is the default");
+        assert_eq!(device_idle_days(Some("30")), Some(30));
+        assert_eq!(device_idle_days(Some(" 7 ")), Some(7));
+        assert_eq!(device_idle_days(Some("0")), None, "0 is off");
+        // A typo is the default, never off: off would be the silent failure.
+        assert_eq!(device_idle_days(Some("-1")), Some(90));
+        assert_eq!(device_idle_days(Some("ninety")), Some(90));
+        assert_eq!(device_idle_days(Some("1.5")), Some(90));
+        assert_eq!(device_idle_days(Some("99999999999")), Some(1_000_000));
+        let c = cfg(&[("STORAGE_BACKEND", "local"), ("SECRET_KEY_BASE", "x")]).unwrap();
+        assert_eq!(c.device_idle_days, Some(90));
+        let c = cfg(&[
+            ("STORAGE_BACKEND", "local"),
+            ("SECRET_KEY_BASE", "x"),
+            ("DEVICE_IDLE_DAYS", "0"),
+        ])
+        .unwrap();
+        assert_eq!(c.device_idle_days, None);
     }
 
     #[test]

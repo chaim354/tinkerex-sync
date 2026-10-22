@@ -50,6 +50,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/up"),
     ("GET", "/v1/devices/whoami"),
     ("POST", "/v1/devices"),
+    ("DELETE", "/v1/devices/:id"),
     ("POST", "/v1/commit"),
     ("POST", "/v1/commit/:commit_id/finalize"),
     ("GET", "/v1/changes"),
@@ -85,6 +86,7 @@ pub fn router(state: State) -> Router {
         .route("/up", get(up))
         .route("/v1/devices/whoami", get(whoami))
         .route("/v1/devices", post(devices_create))
+        .route("/v1/devices/{id}", delete(devices_destroy))
         .route(
             "/v1/commit",
             post(commit_begin).layer(DefaultBodyLimit::max(COMMIT_BODY_LIMIT)),
@@ -137,7 +139,8 @@ pub fn router(state: State) -> Router {
 
 // ---- extractors ------------------------------------------------------------------------------
 
-/// The authenticated device and its user; `last_seen_at` is stamped as a side effect.
+/// The admitted device and its user (`auth` has the rule); `last_seen_at` is stamped as a side
+/// effect, at most once per `LAST_SEEN_RESOLUTION_SECONDS`.
 pub struct Auth(pub Identity);
 
 impl FromRequestParts<State> for Auth {
@@ -149,7 +152,13 @@ impl FromRequestParts<State> for Auth {
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok());
         Ok(Auth(
-            authenticate(&state.db, header, Timestamp::now()).await?,
+            authenticate(
+                &state.db,
+                header,
+                Timestamp::now(),
+                state.config.device_idle_days,
+            )
+            .await?,
         ))
     }
 }

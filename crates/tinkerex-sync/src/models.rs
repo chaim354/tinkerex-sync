@@ -87,12 +87,35 @@ impl User {
 
 // ---- devices --------------------------------------------------------------------------------
 
+/// What every device read selects, so the struct and the column list cannot drift apart.
+const DEVICE_COLUMNS: &str =
+    "id, user_id, name, created_at, last_seen_at, issuer_device_id, revoked_at";
+
+/// `last_seen_at` is written at most this often per device. Idle expiry is measured in days, so a
+/// clock this coarse moves the expiry instant by minutes; what it saves is a write -- on SQLite,
+/// the one writer lock commits queue behind -- on nearly every authenticated read.
+pub const LAST_SEEN_RESOLUTION_SECONDS: i64 = 300;
+
+/// A credential, and which of the two kinds it is (`issuer_device_id`, migration 20261022000001):
+///   - a LIBRARY credential (`issuer_device_id` NULL) is minted outside the device API -- the
+///     operator's `device issue`, or `POST /v1/admin/libraries`, which is how the maker app holds
+///     each user's bootstrap token. Nothing can mint another through the API (the admin door
+///     refuses an email it already has), so it never idles out and the revoke door never revokes
+///     one; only the operator's `device revoke` does. Every row older than the migration reads as
+///     one too, because nothing recorded who minted it -- the safe direction, since the maker
+///     app's own token is among them;
+///   - a DEVICE credential (`issuer_device_id` set) was minted by `POST /v1/devices` with the token
+///     of the device it names. It idles out after `DEVICE_IDLE_DAYS`, and revoking it revokes every
+///     device it minted in turn (`services::revocation`).
 #[derive(Debug, Clone)]
 pub struct Device {
     pub id: i64,
     pub user_id: i64,
     pub name: String,
+    pub created_at: Timestamp,
     pub last_seen_at: Option<Timestamp>,
+    pub issuer_device_id: Option<i64>,
+    pub revoked_at: Option<Timestamp>,
 }
 
 impl Device {
@@ -101,16 +124,60 @@ impl Device {
             id: r.i64("id")?,
             user_id: r.i64("user_id")?,
             name: r.str("name")?,
+            created_at: r.time("created_at")?,
             last_seen_at: r.opt_time("last_seen_at")?,
+            issuer_device_id: r.opt_i64("issuer_device_id")?,
+            revoked_at: r.opt_time("revoked_at")?,
         })
+    }
+
+    pub fn is_library_credential(&self) -> bool {
+        self.issuer_device_id.is_none()
+    }
+
+    /// The idle clock, the maker app's `Device#last_active_at`: a device never used since it was
+    /// minted counts from `created_at`.
+    pub fn last_active_at(&self) -> Timestamp {
+        self.last_seen_at.unwrap_or(self.created_at)
+    }
+
+    /// Unused for longer than `idle_days`. A library credential never idles out (see the type).
+    pub fn idled_out(&self, now: Timestamp, idle_days: Option<i64>) -> bool {
+        match idle_days {
+            Some(days) if !self.is_library_credential() => {
+                self.last_active_at() < now.minus_seconds(days * 86_400)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether a request now should move `last_seen_at` (`LAST_SEEN_RESOLUTION_SECONDS`).
+    pub fn seen_is_stale(&self, now: Timestamp) -> bool {
+        self.last_seen_at
+            .is_none_or(|t| t < now.minus_seconds(LAST_SEEN_RESOLUTION_SECONDS))
     }
 
     pub async fn find_by_digest<E: Exec>(e: &mut E, digest: &str) -> sqlx::Result<Option<Self>> {
         e.fetch_optional(
-            &Query::new(
-                "SELECT id, user_id, name, last_seen_at FROM devices WHERE token_digest = $1",
-            )
+            &Query::new(format!(
+                "SELECT {DEVICE_COLUMNS} FROM devices WHERE token_digest = $1"
+            ))
             .bind(digest),
+        )
+        .await?
+        .map(|r| Self::from_row(&r))
+        .transpose()
+    }
+
+    /// By id across every library: the operator's CLI, the cable re-check and the mint's re-read
+    /// of its own issuer -- never a lookup of a CLIENT-supplied id, which the revoke door scopes
+    /// to the caller's library through `list_for_user`.
+    pub async fn find<E: Exec>(e: &mut E, id: i64) -> sqlx::Result<Option<Self>> {
+        e.fetch_optional(
+            &Query::new(format!(
+                "SELECT {DEVICE_COLUMNS} FROM devices WHERE id = $1"
+            ))
+            .bind(id),
         )
         .await?
         .map(|r| Self::from_row(&r))
@@ -122,16 +189,18 @@ impl Device {
         user_id: i64,
         name: &str,
         digest: &str,
+        issuer_device_id: Option<i64>,
         now: Timestamp,
     ) -> sqlx::Result<Self> {
         let row = e
             .fetch_one(
                 &Query::new(
-                    "INSERT INTO devices (user_id, name, token_digest, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                    "INSERT INTO devices (user_id, name, token_digest, issuer_device_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
                 )
                 .bind(user_id)
                 .bind(name)
                 .bind(digest)
+                .bind(issuer_device_id)
                 .bind(now)
                 .bind(now),
             )
@@ -140,7 +209,10 @@ impl Device {
             id: row.i64("id")?,
             user_id,
             name: name.to_string(),
+            created_at: now,
             last_seen_at: None,
+            issuer_device_id,
+            revoked_at: None,
         })
     }
 
@@ -152,6 +224,29 @@ impl Device {
         )
         .await?;
         Ok(())
+    }
+
+    /// Stamp the given devices revoked, once: a row revoked earlier keeps its first `revoked_at`.
+    pub async fn mark_revoked<E: Exec>(
+        e: &mut E,
+        user_id: i64,
+        ids: &[i64],
+        now: Timestamp,
+    ) -> sqlx::Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut q = Query::new(format!(
+            "UPDATE devices SET revoked_at = $1, updated_at = $2 WHERE user_id = $3 AND revoked_at IS NULL AND id IN ({})",
+            placeholders(4, ids.len())
+        ))
+        .bind(now)
+        .bind(now)
+        .bind(user_id);
+        for id in ids {
+            q = q.bind(*id);
+        }
+        e.execute(&q).await
     }
 
     pub async fn name_of<E: Exec>(
@@ -172,12 +267,19 @@ impl Device {
         .transpose()
     }
 
+    /// Every device of one library, revoked ones included: a user has a handful, and the revoke
+    /// door walks their lineage in memory rather than in dialect-specific recursive SQL.
     pub async fn list_for_user<E: Exec>(e: &mut E, user_id: i64) -> sqlx::Result<Vec<Self>> {
-        e.fetch_all(&Query::new("SELECT id, user_id, name, last_seen_at FROM devices WHERE user_id = $1 ORDER BY id").bind(user_id))
-            .await?
-            .iter()
-            .map(Self::from_row)
-            .collect()
+        e.fetch_all(
+            &Query::new(format!(
+                "SELECT {DEVICE_COLUMNS} FROM devices WHERE user_id = $1 ORDER BY id"
+            ))
+            .bind(user_id),
+        )
+        .await?
+        .iter()
+        .map(Self::from_row)
+        .collect()
     }
 }
 

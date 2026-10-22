@@ -75,7 +75,7 @@ class ConformanceTest < Minitest::Test
   # so a route rename can't leave a stale excuse sitting here unnoticed.
   #
   # TWO ENTRIES, BOTH OUTSIDE THE SYNC WIRE, AND NEITHER A PLACEHOLDER LEFT FOR LATER: every one of
-  # the 28 /v1 routes the binary serves is exercised by a real scenario step somewhere in
+  # the 29 /v1 routes the binary serves is exercised by a real scenario step somewhere in
   # conformance/scenarios/*.yml, including the ones that looked likeliest to need an exception
   # going in -- POST /v1/share_links's anonymous redeem counterpart needs no second real device or
   # out-of-band credential (a second/third DEVICE is just another self-service POST /v1/devices

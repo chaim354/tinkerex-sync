@@ -50,7 +50,20 @@ impl TestServer {
 
     /// `database`: `None` for a fresh temp SQLite file, or a `DATABASE_URL` (the Postgres leg).
     pub async fn start_with(database: Option<String>) -> Self {
-        Self::start_from(database, HashMap::new()).await
+        Self::start_from(database, HashMap::new(), |_| {}).await
+    }
+
+    /// The default database, with the parsed configuration adjusted before the server is built --
+    /// for what no environment variable reaches (the cable re-check), or to skip one's parsing.
+    pub async fn start_tuned(tune: impl FnOnce(&mut Config)) -> Self {
+        Self::start_from(
+            std::env::var("TEST_DATABASE_URL")
+                .ok()
+                .filter(|u| !u.is_empty()),
+            HashMap::new(),
+            tune,
+        )
+        .await
     }
 
     /// The s3 store instead of the local blob tier (tests/s3_roundtrip.rs, against a real
@@ -75,11 +88,16 @@ impl TestServer {
                 .ok()
                 .filter(|u| !u.is_empty()),
             storage,
+            |_| {},
         )
         .await
     }
 
-    async fn start_from(database: Option<String>, storage: HashMap<&'static str, String>) -> Self {
+    async fn start_from(
+        database: Option<String>,
+        storage: HashMap<&'static str, String>,
+        tune: impl FnOnce(&mut Config),
+    ) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("test.sqlite3");
         let chunk_dir = dir.path().join("chunks");
@@ -98,7 +116,8 @@ impl TestServer {
                 env.insert("SQLITE_DATABASE", db_path.to_string_lossy().into_owned());
             }
         }
-        let config = Config::from_lookup(&|k| env.get(k).cloned()).expect("config");
+        let mut config = Config::from_lookup(&|k| env.get(k).cloned()).expect("config");
+        tune(&mut config);
         assert!(
             matches!(&config.database, DatabaseConfig::Sqlite { .. }) == database.is_none(),
             "the database the harness resolved is not the one asked for"
@@ -159,6 +178,76 @@ impl TestServer {
 
     pub fn http(&self) -> reqwest::Client {
         reqwest::Client::new()
+    }
+
+    /// `POST /v1/devices` with `token`: a device credential minted by `token`'s device.
+    pub async fn mint(&self, token: &str, name: &str) -> IssuedDevice {
+        let resp = self
+            .http()
+            .post(format!("{}/v1/devices", self.base_url))
+            .bearer_auth(token)
+            .json(&json!({ "name": name }))
+            .send()
+            .await
+            .expect("mint request");
+        assert_eq!(resp.status(), 201, "mint {name}");
+        let body: Value = resp.json().await.expect("mint json");
+        IssuedDevice {
+            user_id: 0,
+            device_id: body["device_id"].as_i64().expect("device_id"),
+            device_token: body["device_token"]
+                .as_str()
+                .expect("device_token")
+                .to_string(),
+        }
+    }
+
+    /// `DELETE /v1/devices/:id` with `token`: the status and the body text.
+    pub async fn revoke(&self, token: &str, device_id: &str) -> (u16, String) {
+        let resp = self
+            .http()
+            .delete(format!("{}/v1/devices/{device_id}", self.base_url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .expect("revoke request");
+        let status = resp.status().as_u16();
+        (status, resp.text().await.expect("revoke body"))
+    }
+
+    pub async fn whoami_status(&self, token: &str) -> u16 {
+        self.http()
+            .get(format!("{}/v1/devices/whoami", self.base_url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .expect("whoami request")
+            .status()
+            .as_u16()
+    }
+
+    /// One device row's timestamp column (`last_seen_at`, `revoked_at`, `created_at`).
+    pub async fn device_time(&self, device_id: i64, column: &str) -> Option<Timestamp> {
+        let db = self.db.clone();
+        db.fetch_one(
+            &Query::new(format!("SELECT {column} FROM devices WHERE id = $1")).bind(device_id),
+        )
+        .await
+        .expect("device row")
+        .opt_time(column)
+        .expect("a timestamp column")
+    }
+
+    /// Set one device row's timestamp column: the "bypass the clock" the expiry tests need.
+    pub async fn set_device_time(&self, device_id: i64, column: &str, at: Option<Timestamp>) {
+        let db = self.db.clone();
+        db.execute(
+            &Query::new(format!("UPDATE devices SET {column} = $1 WHERE id = $2"))
+                .bind(at)
+                .bind(device_id),
+        )
+        .await
+        .expect("set device time");
     }
 
     /// One row's integer column, or `None` for no row.

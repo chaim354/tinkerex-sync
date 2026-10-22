@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 
-use tinkerex_sync::config::{Config, DatabaseConfig, StorageConfig};
+use tinkerex_sync::config::{self, Config, DatabaseConfig, StorageConfig};
 use tinkerex_sync::db::Db;
 use tinkerex_sync::http::{AppState, ROUTES, router};
 use tinkerex_sync::models::{ChangelogEntry, Device, Node, User, Version, chunk_count};
@@ -17,6 +17,7 @@ use tinkerex_sync::services::doctor::{self as pooler, PoolerCheck};
 use tinkerex_sync::services::nudge::Hub;
 use tinkerex_sync::services::provisioning;
 use tinkerex_sync::services::retention::Policy;
+use tinkerex_sync::services::revocation;
 use tinkerex_sync::services::{gc, reapers};
 use tinkerex_sync::store::ChunkStore;
 use tinkerex_sync::time::Timestamp;
@@ -125,10 +126,18 @@ enum DeviceCommand {
         #[arg(long, env = "NAME", default_value = "device")]
         name: String,
     },
-    /// List a user's devices, without revealing any token.
+    /// List a user's devices, without revealing any token: id, name, last seen, then what kind of
+    /// credential it is and whether it still authenticates.
     List {
         #[arg(long, env = "EMAIL")]
         email: String,
+    },
+    /// Revoke a device by id, and every device it minted. The one way to revoke a LIBRARY
+    /// credential (the maker app's bootstrap token, a `device issue` token), which the HTTP door
+    /// never does: nothing can mint that library another one except `device issue`.
+    Revoke {
+        #[arg(long)]
+        id: i64,
     },
 }
 
@@ -177,8 +186,13 @@ async fn main() -> anyhow::Result<()> {
         Command::Doctor => doctor().await,
         Command::Migrate { environment } => {
             let db = open_db().await?;
+            let pending = schema::pending_own_migrations(&db).await?;
             let outcome = schema::migrate(&db, &environment).await?;
+            // stdout stays the one word bin/conformance and the entrypoint's log expect.
             println!("{outcome:?}");
+            for m in pending {
+                eprintln!("applied migration {}: {}", m.version, m.summary);
+            }
             Ok(())
         }
         Command::Device { command } => device(command).await,
@@ -204,6 +218,17 @@ async fn serve(bind: IpAddr, port: u16, migrate: bool, scheduler: bool) -> anyho
         tracing::warn!(
             "the database has no schema; run `tinkerex-sync migrate` (or serve --migrate)"
         );
+    } else {
+        let pending = schema::pending_own_migrations(&db).await?;
+        if !pending.is_empty() {
+            let versions: Vec<&str> = pending.iter().map(|m| m.version).collect();
+            anyhow::bail!(
+                "the database is missing migration(s) {}; every device query needs them, so this server \
+                 would answer 500 to every request while /up said ok. Run `tinkerex-sync migrate` \
+                 (or serve --migrate) first",
+                versions.join(", ")
+            );
+        }
     }
     pooler_check_at_boot(&db).await?;
     let store = ChunkStore::from_config(&config.storage, &config.secret_key_base)?;
@@ -260,12 +285,45 @@ async fn device(command: DeviceCommand) -> anyhow::Result<()> {
             let user = User::find_by_email(&mut dbh, &email)
                 .await?
                 .with_context(|| format!("no user with email {email}"))?;
+            let idle_days =
+                config::device_idle_days(std::env::var("DEVICE_IDLE_DAYS").ok().as_deref());
+            let now = Timestamp::now();
             for d in Device::list_for_user(&mut dbh, user.id).await? {
                 let seen = d
                     .last_seen_at
                     .map(|t| t.to_json())
                     .unwrap_or_else(|| "never".into());
-                println!("{}\t{}\tlast seen {}", d.id, d.name, seen);
+                let kind = match d.issuer_device_id {
+                    None => "library credential".to_string(),
+                    Some(by) => format!("minted by {by}"),
+                };
+                let status = match d.revoked_at {
+                    Some(t) => format!("revoked {}", t.to_json()),
+                    None if d.idled_out(now, idle_days) => "idled out".to_string(),
+                    None => "live".to_string(),
+                };
+                println!("{}\t{}\tlast seen {}\t{kind}\t{status}", d.id, d.name, seen);
+            }
+        }
+        DeviceCommand::Revoke { id } => {
+            match revocation::revoke_as_operator(&db, id, Timestamp::now()).await? {
+                None => anyhow::bail!("no device with id {id}"),
+                Some((target, ids)) => {
+                    println!(
+                        "revoked {} ({}) of user {}, and every device it minted: {}",
+                        target.id,
+                        target.name,
+                        target.user_id,
+                        ids.iter()
+                            .map(i64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    println!(
+                        "a running server cuts their open sockets within its cable re-check ({} s)",
+                        config::CABLE_RECHECK_DEFAULT.as_secs()
+                    );
+                }
             }
         }
     }
@@ -457,12 +515,28 @@ async fn doctor() -> anyhow::Result<()> {
         }
     );
     println!("retention:     {:?}", Policy::from_mode(config.retention));
+    match config.device_idle_days {
+        Some(days) => println!(
+            "device expiry: a device credential idle {days} days stops authenticating (DEVICE_IDLE_DAYS)"
+        ),
+        None => println!("device expiry: off (DEVICE_IDLE_DAYS=0)"),
+    }
     let db = Db::connect(&config.database)
         .await
         .context("connecting to the database")?;
     let mut failed = false;
     if schema::table_exists(&db, "users").await? {
-        println!("schema:        present");
+        let pending = schema::pending_own_migrations(&db).await?;
+        if pending.is_empty() {
+            println!("schema:        present, every migration applied");
+        } else {
+            let versions: Vec<&str> = pending.iter().map(|m| m.version).collect();
+            println!(
+                "schema:        present, MISSING migration(s) {} -- run `tinkerex-sync migrate`",
+                versions.join(", ")
+            );
+            failed = true;
+        }
     } else {
         println!("schema:        MISSING -- run `tinkerex-sync migrate`");
         failed = true;

@@ -15,6 +15,7 @@ pub mod provisioning;
 pub mod reapers;
 pub mod restore;
 pub mod retention;
+pub mod revocation;
 pub mod search;
 pub mod sharing;
 pub mod subtree_delete;

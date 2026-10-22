@@ -44,8 +44,8 @@ async fn every_listed_route_reaches_a_handler() {
     }
     assert_eq!(
         ROUTES.len(),
-        30,
-        "29 HTTP routes plus /cable; update this with the listing"
+        31,
+        "30 HTTP routes plus /cable; update this with the listing"
     );
     assert!(ROUTES.contains(&("GET", "/cable")));
 }

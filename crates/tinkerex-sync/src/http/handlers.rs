@@ -19,7 +19,7 @@ use crate::services::params::{
     clamp, opt_str, opt_to_i, present_str, require_str, str_to_i, to_bool,
 };
 use crate::services::{
-    changes, commit, conflicts, locks, nodes, provisioning, restore, search, sharing,
+    changes, commit, conflicts, locks, nodes, provisioning, restore, revocation, search, sharing,
     subtree_delete, trash, tree, versions,
 };
 use crate::time::Timestamp;
@@ -53,7 +53,7 @@ pub async fn up(AxumState(state): AxumState<State>) -> Response {
     }
 }
 
-// ---- devices (the host's own two routes) ------------------------------------------------------
+// ---- devices ----------------------------------------------------------------------------------
 
 pub async fn whoami(Auth(id): Auth) -> Response {
     Json(json!({ "user_id": id.user.id, "device_id": id.device.id, "head_seq": id.user.head_seq }))
@@ -67,10 +67,23 @@ pub async fn devices_create(
 ) -> ApiResult<Response> {
     let name = present_str(body.get("name")).unwrap_or_else(|| "device".to_string());
     let issued =
-        provisioning::register_device(&state.db, id.user.id, &name, Timestamp::now()).await?;
+        provisioning::register_sibling(&state.db, &id.device, &name, Timestamp::now()).await?;
     Ok(created(
         json!({ "device_id": issued.device_id, "device_token": issued.device_token }),
     ))
+}
+
+/// The revoke door (`services::revocation` has who may revoke what). 204 with no body, again on
+/// a repeat; the revoked devices' open sockets are cut before the response goes out.
+pub async fn devices_destroy(
+    AxumState(state): AxumState<State>,
+    Auth(id): Auth,
+    Path(device_id): Path<String>,
+) -> ApiResult<Response> {
+    let device_id: i64 = device_id.parse().map_err(|_| ApiError::NotFound)?;
+    let revoked = revocation::revoke(&state.db, &id.device, device_id, Timestamp::now()).await?;
+    state.hub.revoked(id.user.id, &revoked);
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 // ---- commits ----------------------------------------------------------------------------------

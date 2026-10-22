@@ -1,6 +1,7 @@
 GET /up
 GET /v1/devices/whoami
 POST /v1/devices
+DELETE /v1/devices/:id
 POST /v1/commit
 POST /v1/commit/:commit_id/finalize
 GET /v1/changes

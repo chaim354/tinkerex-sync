@@ -5,8 +5,12 @@
 //! the Ruby image can still boot on it (the rollback story). `postgres.sql` is the same schema in
 //! Active Record's Postgres spelling. Neither file carries comments: they are split on `;`.
 //!
-//! On an existing Rails database nothing is created and nothing is altered; the two Rails
-//! migration versions are checked and the run is recorded as an adoption.
+//! On an existing Rails database nothing Rails created is recreated: the two Rails migration
+//! versions are checked and the run is recorded as an adoption. Then, on either kind, the
+//! binary's OWN migrations (`OWN_MIGRATIONS`) that `tinkerex_sync_migrations` does not yet record
+//! are applied in order, each in one transaction with its version row. They only ever ADD
+//! nullable columns, so the Rails schema's rows still read as Rails rows, and the Ruby image could
+//! still boot on the file (CLAUDE.md §0.4).
 
 use anyhow::{Context as _, bail};
 
@@ -25,6 +29,32 @@ pub const RAILS_SCHEMA_VERSIONS: [&str; 2] = ["20260101000001", "20260101000002"
 pub const RAILS_SCHEMA_SHA1: &str = "6dfa4503bec5b6521cffadb6fc75dca91ada2c68";
 
 const OWN_MIGRATIONS_TABLE: &str = "tinkerex_sync_migrations";
+
+/// One schema change the Rails schema never had, in both dialects' spelling.
+pub struct OwnMigration {
+    pub version: &'static str,
+    pub summary: &'static str,
+    sqlite: &'static [&'static str],
+    postgres: &'static [&'static str],
+}
+
+/// Applied in this order, never edited once shipped: a deployed volume records each version.
+pub const OWN_MIGRATIONS: &[OwnMigration] = &[OwnMigration {
+    version: "20261022000001",
+    summary: "devices.issuer_device_id and devices.revoked_at (revocation and idle expiry, tinkerex#473)",
+    // `issuer_device_id`: the device whose token minted this one through `POST /v1/devices`; NULL
+    // for a library credential (the admin door, `device issue`) and for every row older than this
+    // migration. `revoked_at`: set by a revoke, never cleared; the row is kept so the names in
+    // conflicts and locks still resolve.
+    sqlite: &[
+        "ALTER TABLE \"devices\" ADD \"issuer_device_id\" bigint",
+        "ALTER TABLE \"devices\" ADD \"revoked_at\" datetime(6)",
+    ],
+    postgres: &[
+        "ALTER TABLE devices ADD issuer_device_id bigint",
+        "ALTER TABLE devices ADD revoked_at timestamp(6) without time zone",
+    ],
+}];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -69,7 +99,56 @@ pub async fn migrate(db: &Db, environment: &str) -> anyhow::Result<Outcome> {
     };
 
     ensure_own_migrations_table(db).await?;
+    for m in pending_own_migrations(db).await? {
+        apply_own_migration(db, m).await?;
+    }
     Ok(outcome)
+}
+
+/// The own migrations a database has not recorded, in order -- every one of them when the
+/// bookkeeping table itself is absent. `serve` refuses to start while this is non-empty: every
+/// device query names the columns they add, so the server would answer 500 to every request
+/// while `/up` (which reads only `users`) reported it healthy.
+pub async fn pending_own_migrations(db: &Db) -> anyhow::Result<Vec<&'static OwnMigration>> {
+    if !table_exists(db, OWN_MIGRATIONS_TABLE).await? {
+        return Ok(OWN_MIGRATIONS.iter().collect());
+    }
+    let rows = db
+        .fetch_all(&Query::new(format!(
+            "SELECT version FROM {OWN_MIGRATIONS_TABLE}"
+        )))
+        .await?;
+    let applied: Vec<String> = rows
+        .iter()
+        .map(|r| r.str("version"))
+        .collect::<Result<_, _>>()?;
+    Ok(OWN_MIGRATIONS
+        .iter()
+        .filter(|m| !applied.iter().any(|a| a == m.version))
+        .collect())
+}
+
+async fn apply_own_migration(db: &Db, m: &OwnMigration) -> anyhow::Result<()> {
+    let statements = match db.dialect() {
+        Dialect::Sqlite => m.sqlite,
+        Dialect::Postgres => m.postgres,
+    };
+    let mut tx = db.begin().await?;
+    for stmt in statements {
+        tx.execute(&Query::new(*stmt))
+            .await
+            .with_context(|| format!("migration {}: {stmt}", m.version))?;
+    }
+    tx.execute(
+        &Query::new(format!(
+            "INSERT INTO {OWN_MIGRATIONS_TABLE} (version, applied_at) VALUES ($1, $2)"
+        ))
+        .bind(m.version)
+        .bind(Timestamp::now()),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 fn statements(ddl: &str) -> impl Iterator<Item = &str> {
@@ -228,6 +307,86 @@ mod tests {
         assert!(sql.contains("fk_rails_914f13c63b"), "{sql}");
         // Running again adopts rather than recreating.
         assert_eq!(migrate(&db, "production").await.unwrap(), Outcome::Adopted);
+    }
+
+    async fn has_column(db: &Db, table: &str, column: &str) -> bool {
+        db.fetch_one(
+            &Query::new("SELECT count(*) AS n FROM pragma_table_info($1) WHERE name = $2")
+                .bind(table)
+                .bind(column),
+        )
+        .await
+        .unwrap()
+        .i64("n")
+        .unwrap()
+            == 1
+    }
+
+    async fn recorded_own_versions(db: &Db) -> Vec<String> {
+        db.fetch_all(&Query::new(
+            "SELECT version FROM tinkerex_sync_migrations ORDER BY version",
+        ))
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.str("version").unwrap())
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn a_fresh_database_gets_every_own_migration_recorded_once() {
+        let (_dir, db) = temp_sqlite().await;
+        migrate(&db, "production").await.unwrap();
+        assert!(has_column(&db, "devices", "issuer_device_id").await);
+        assert!(has_column(&db, "devices", "revoked_at").await);
+        let all: Vec<&str> = OWN_MIGRATIONS.iter().map(|m| m.version).collect();
+        assert!(
+            !all.is_empty(),
+            "the list this test checks must not be empty"
+        );
+        assert_eq!(recorded_own_versions(&db).await, all);
+        assert!(pending_own_migrations(&db).await.unwrap().is_empty());
+        // A second run applies nothing: re-running an ADD COLUMN would fail loudly.
+        assert_eq!(migrate(&db, "production").await.unwrap(), Outcome::Adopted);
+        assert_eq!(recorded_own_versions(&db).await, all);
+    }
+
+    /// The deployed volume's case: a file Rails created (no own bookkeeping, no new columns) with
+    /// a device already in it. Adoption adds the columns around the row, which keeps NULLs --
+    /// which is what makes every pre-existing device a library credential (`models::Device`).
+    #[tokio::test]
+    async fn adopting_a_rails_file_adds_the_columns_around_its_existing_rows() {
+        let (_dir, db) = temp_sqlite().await;
+        create_fresh(&db, "production").await.unwrap();
+        db.execute(&Query::new(
+            "INSERT INTO users (email, head_seq, created_at, updated_at) VALUES ('old@example.com', 0, '2026-08-01 00:00:00', '2026-08-01 00:00:00')",
+        ))
+        .await
+        .unwrap();
+        db.execute(&Query::new(
+            "INSERT INTO devices (user_id, name, token_digest, created_at, updated_at) VALUES (1, 'old', 'abc', '2026-08-01 00:00:00', '2026-08-01 00:00:00')",
+        ))
+        .await
+        .unwrap();
+        assert!(!has_column(&db, "devices", "revoked_at").await);
+        assert_eq!(
+            pending_own_migrations(&db).await.unwrap().len(),
+            OWN_MIGRATIONS.len()
+        );
+
+        assert_eq!(migrate(&db, "production").await.unwrap(), Outcome::Adopted);
+        assert!(has_column(&db, "devices", "issuer_device_id").await);
+        assert!(has_column(&db, "devices", "revoked_at").await);
+        let row = db
+            .fetch_one(&Query::new(
+                "SELECT name, issuer_device_id, revoked_at FROM devices",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(row.str("name").unwrap(), "old");
+        assert_eq!(row.opt_i64("issuer_device_id").unwrap(), None);
+        assert_eq!(row.opt_time("revoked_at").unwrap(), None);
+        assert!(pending_own_migrations(&db).await.unwrap().is_empty());
     }
 
     #[tokio::test]

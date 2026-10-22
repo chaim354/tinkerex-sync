@@ -53,7 +53,7 @@ jobs:
       - name: Tests
         run: cargo test
 
-  # THE CORPUS AGAINST THE BINARY: the sixteen scenario files, graded by the Ruby verifier from
+  # THE CORPUS AGAINST THE BINARY: the seventeen scenario files, graded by the Ruby verifier from
   # outside the server's own language (conformance/README.md, "Why this corpus exists").
   conformance:
     runs-on: [ self-hosted, macos ]
@@ -68,7 +68,7 @@ jobs:
 
       # THE TOOLING'S OWN TESTS: the matcher (conformance/runner.rb -- the corpus's teeth, shared by
       # the verifier and bin/conformance-record) and bin/build-and-push's tagging. There is no server
-      # in this step, so test/conformance_test.rb's sixteen scenario tests SKIP here, by design: the
+      # in this step, so test/conformance_test.rb's seventeen scenario tests SKIP here, by design: the
       # next steps run them against the binary and fail on any skip.
       - name: Tooling tests (no server -- the scenarios skip here)
         run: bundle exec rake test

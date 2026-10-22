@@ -23,10 +23,10 @@ Project context for an AI coding agent (Claude Code) and human developers.
    so the grader never shares the server's assumptions — the same failure shape as a fake that
    shares the real code's own bug (§5). If you are changing endpoint behaviour, the corpus moves
    with you. See §7.
-2. **The v1 API is 28 routes; the maker app calls only 8 of them.** Do not infer the surface from
+2. **The v1 API is 29 routes; the maker app calls only 8 of them.** Do not infer the surface from
    what `chaim354/tinkerex` uses — versions, symlinks, search, locks, conflicts, share links and the
    blob PUT/GET all exist for *devices*, which are the primary client. Count them yourself:
-   `tinkerex-sync routes` prints all 30 lines (the 28, plus `GET /up` and `GET /cable`), and
+   `tinkerex-sync routes` prints all 31 lines (the 29, plus `GET /up` and `GET /cable`), and
    `conformance/routes.txt` is that output checked in.
 3. **Production has run this binary since 2026-10-07**, as the maker app's `sync` Kamal
    **accessory** — the cutover is `docs/superpowers/plans/2026-10-07-rust-cutover.md`, and its §0.5
@@ -37,9 +37,13 @@ Project context for an AI coding agent (Claude Code) and human developers.
 4. **The binary still writes the Rails schema and the Rails storage conventions** (rewrite plan D2:
    the same tables, datetime text, 0/1 booleans, `schema_migrations` rows, env names, image paths).
    That is what made the cutover reversible, and it is the on-disk format of every deployed volume.
-   With the Ruby gone, changing it is possible — but only as a migration the binary would have to
-   grow (`migrate` already creates an empty `tinkerex_sync_migrations` table for it, in
-   `src/schema/`), never a casual rename (§4d).
+   With the Ruby gone, changing it is possible — but only as a migration the binary grows
+   (`schema::OWN_MIGRATIONS`, recorded in `tinkerex_sync_migrations`), never a casual rename
+   (§4d). There is one so far, `20261022000001` (2026-10-22, tinkerex#473): two nullable columns on
+   `devices`, `issuer_device_id` and `revoked_at`. Own migrations only ADD nullable columns, so the
+   Ruby image could still boot on the file — but it would not read `revoked_at`, so a rollback to it
+   would re-admit every revoked token. `serve` refuses to start while one is pending (`migrate`
+   runs first in the entrypoint).
 
 ---
 
@@ -132,10 +136,38 @@ flip in passing. Nothing to probe on SQLite.
   1Password item or the far side answers 503.
 - **Presigning is local** (HMAC, SigV4) — chunk URLs are verifiable without the storage being
   reachable.
+- **Two kinds of credential, told apart by `devices.issuer_device_id`** (`models::Device`). A
+  **library credential** (NULL) is minted outside the device API — `device issue`, or the admin
+  door, which is how the maker app holds each user's bootstrap token — and so is every row older
+  than migration `20261022000001`. A **device credential** was minted by `POST /v1/devices`, which
+  records the minting device. The difference decides both rules below, and it is deliberate that
+  the maker app's own token can be neither revoked over HTTP nor idled out: the admin door refuses
+  an email it already has, so nothing could mint that library another one without an operator.
+- **`DELETE /v1/devices/:id` revokes, and who may is the lineage** (`services::revocation`). A
+  library credential may revoke any device credential of its library; a device credential only
+  itself and what it minted; nobody revokes a library credential through it (403
+  `library_credential`; a device outside the caller's reach is 403 `forbidden`). Another library's
+  id, or an unknown one, is the plain 404. A revocation cascades to everything the target minted,
+  keeps the rows (`revoked_at`, set once) and is idempotent. `SYNC_ADMIN_TOKEN` reaches no existing
+  library's devices, on purpose; the operator's `tinkerex-sync device revoke --id` is the only
+  door that revokes a library credential.
+- **`DEVICE_IDLE_DAYS`** (default 90, `0` = off — the maker app's variable and parsing rule): a
+  DEVICE credential unused that long stops authenticating; library credentials never idle out.
+  `last_seen_at` moves at most once per `LAST_SEEN_RESOLUTION_SECONDS` (300), never on a refused
+  request.
+- **Every device-token door admits through `auth::admit_token`**, the HTTP routes and `/cable`
+  alike; a refused token is the same `{"error":"unauthorized"}` 401 (or `/cable` `disconnect`
+  frame) an unknown one gets. An open `/cable` socket is cut the moment the door revokes its device
+  (a hub event) and re-admitted every `cable_recheck` (60 s), which is what reaches an operator's
+  out-of-process revoke and idle expiry — and what keeps a connected device in use, so a device
+  holding its socket open never idles out. Not reached by a revocation: a request already past
+  authentication, presigned URLs already handed out (until their `exp`), a lock (its 300 s TTL).
 - **Device-token verification is duplicated in the maker app, by structural necessity and with no
   guard.** Its own v1 API authenticates its own `devices` table and cannot call this server to do
   it. Change `crates/tinkerex-sync/src/auth.rs`'s `authenticate` and the maker's in the same breath
-  (maker CLAUDE.md §14j).
+  (maker CLAUDE.md §14j). Both now revoke and idle-expire; the deliberate differences are this
+  side's, and they are the two above — a library credential (the maker app's own token here)
+  never idles out, and `last_seen_at` is throttled where the maker stamps every request.
 
 ---
 
@@ -222,7 +254,10 @@ and stand in §5.
 - **`/cable` checks no `Origin` and accepts both channel identifiers the clients have sent**
   (`src/http/cable.rs`). Do not "tighten" it: the deployed desktop client sends no `Origin` and the
   bare identifier, and the device token in the query string IS the authorization — there is no
-  browser session to forge.
+  browser session to forge. Which is why it is admitted by the same rule as every route, and not
+  only once: a socket outlives the request that opened it, so it is re-admitted on a timer and cut
+  on a revocation (§3). A `/cable` that looked a token up without `auth::admit_token` — what it did
+  until 2026-10-22 — would keep nudging a revoked device for as long as it stayed connected.
 - **The device-facing trash restore keeps a caller-supplied `to_root`, deliberately.** Without it
   an orphan (its parent still tombstoned) is a 409 `parent_deleted`; with it, the orphan is
   re-parented to the library root. The maker app takes the strict 409 because a browser Restore
@@ -334,14 +369,14 @@ same hands as the server would share its misunderstandings. `conformance/README.
 *an implementer who does not read Ruby* and is the authority on the format; this section only says
 what a change in *this* repo owes it.
 
-- **Sixteen scenarios** (`conformance/scenarios/01-enrolment.yml` … `16-blob-tier.yml`), a
+- **Seventeen scenarios** (`conformance/scenarios/01-enrolment.yml` … `17-device-revocation.yml`), a
   `runner.rb` (the matcher the verifier and the recorder share), a `schema.json`, and `routes.txt`.
 - **THEY SKIP UNLESS `SYNC_SERVER_URL` IS SET**, because they drive a **real running server** over
-  HTTP. `bundle exec rake test` on its own reports **16 skips — the entire corpus** (beside the
+  HTTP. `bundle exec rake test` on its own reports **17 skips — the entire corpus** (beside the
   matcher's and the build script's own tests). A green local run therefore proves nothing about the
   wire.
 - **`bin/conformance` closes that hole, and CI runs it.** It builds the binary, boots it on a FRESH
-  database (`11-admin.yml` and `14-tenancy.yml` provision fixed emails) with a freshly issued device
+  database (`11-admin.yml`, `14-tenancy.yml` and `17-device-revocation.yml` provision fixed emails) with a freshly issued device
   and the corpus's fixed `SYNC_ADMIN_TOKEN`, runs the verifier, and **parses the run's own summary
   line**, failing on a nonzero skip count *or on zero runs at all* — the emptier failure, which
   otherwise reports a clean "0 runs, 0 skips" that looks exactly like success. Minitest cannot let
@@ -366,9 +401,9 @@ what a change in *this* repo owes it.
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo deny check licenses sources        # permissive licences only (deny.toml)
-cargo test                               # 98 tests, every TestServer on a temp SQLite file
-bin/conformance                          # 18 runs, 284 assertions, 0 failures, 0 errors, 0 skips
-bundle install && bundle exec rake test  # 40 runs, 76 assertions, 16 skips -- the corpus (§7)
+cargo test                               # 123 tests, every TestServer on a temp SQLite file
+bin/conformance                          # 19 runs, 314 assertions, 0 failures, 0 errors, 0 skips
+bundle install && bundle exec rake test  # 41 runs, 76 assertions, 17 skips -- the corpus (§7)
 
 # The legs CI does not run (no Postgres, no bucket on the runner); each prints NOT RUN when its
 # variable is unset rather than passing silently, and each needs an EMPTY database or bucket:
@@ -389,7 +424,9 @@ bin/build-and-push                       # :<sha>-rust and :latest -- arms the n
 ```
 
 The Postgres legs were green on 2026-09-30 (Postgres 16.13: the whole `cargo test` suite, and the
-corpus at `18 runs, 284 assertions`); they stay manual gates until a runner has Postgres.
+corpus at `18 runs, 284 assertions`) and again on 2026-10-22 (Postgres 16.14 in a local
+`postgres:16` container: all 123 tests, and the corpus at `19 runs, 314 assertions`); they stay
+manual gates until a runner has Postgres.
 
 **`rust-toolchain.toml` pins 1.99.0 with the `minimal` profile plus `rustfmt` and `clippy`**, for
 every cargo call inside this checkout — CI's included — so clippy grades the same lints everywhere

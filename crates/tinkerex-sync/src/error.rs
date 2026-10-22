@@ -1,6 +1,7 @@
 //! The error envelope `Sync::V1::BaseController` installed, reproduced status by status:
 //!   404 is always the literal `{"error":"not_found"}`, whatever the cause;
-//!   400 / 422 / 409 carry the raiser's message; 401 is `{"error":"unauthorized"}`;
+//!   400 / 422 / 409 carry the raiser's message; 401 is `{"error":"unauthorized"}`; 403 (the
+//!   revoke door's alone, the Rust server's own) carries its reason;
 //!   `chunks_missing` is its own 422 shape with the `missing` array a client re-uploads from.
 
 use axum::Json;
@@ -14,6 +15,8 @@ pub enum ApiError {
     NotFound,
     #[error("unauthorized")]
     Unauthorized,
+    #[error("{0}")]
+    Forbidden(String),
     #[error("{0}")]
     BadRequest(String),
     #[error("{0}")]
@@ -53,6 +56,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized => {
                 (StatusCode::UNAUTHORIZED, json!({ "error": "unauthorized" }))
             }
+            ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, json!({ "error": m })),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, json!({ "error": m })),
             ApiError::Unprocessable(m) => (StatusCode::UNPROCESSABLE_ENTITY, json!({ "error": m })),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, json!({ "error": m })),

@@ -22,7 +22,8 @@ cargo build --release -p tinkerex-sync           # target/release/tinkerex-sync
 tinkerex-sync serve [--bind 0.0.0.0] [--port 3000] [--migrate] [--scheduler]
 tinkerex-sync migrate                            # create the schema, or adopt an existing one
 tinkerex-sync device issue --email a@b.c [--name device]   # user_id:/device_id:/device_token:, once
-tinkerex-sync device list  --email a@b.c
+tinkerex-sync device list  --email a@b.c        # each device's kind, and whether it is live, idled out or revoked
+tinkerex-sync device revoke --id N              # a device and everything it minted (DELETE /v1/devices/:id is the HTTP door)
 tinkerex-sync stats [--brief]                    # row counts; --brief prints "<n> nodes, <m> versions"
 tinkerex-sync routes                             # every route it serves, one per line
 tinkerex-sync doctor                             # configuration, schema presence, the Postgres pooler probe
@@ -31,7 +32,7 @@ tinkerex-sync gc reap-pending [--ttl-hours 24]    [--user N] [--dry-run]
 tinkerex-sync gc reap-storage [--grace-hours 24]  [--user N] [--dry-run]
 ```
 
-`serve` answers the v1 API — 28 routes — plus `GET /up` (a readiness probe that reads the database)
+`serve` answers the v1 API — 29 routes — plus `GET /up` (a readiness probe that reads the database)
 and `GET /cable` (the realtime nudge, Action Cable framing). `device issue` prints its token once and
 keeps only a SHA-256 digest: capture it into a file rather than reading it off the terminal; it is 43
 base64url characters, not hex, and a pattern written for hex silently matches nothing. `--scheduler`
@@ -106,7 +107,7 @@ The wire is specified in `docs/sync-protocol.md` in the maker repo.
 
 ## The conformance corpus
 
-`conformance/` holds sixteen scenario files of recorded HTTP exchanges — authored requests, real
+`conformance/` holds seventeen scenario files of recorded HTTP exchanges — authored requests, real
 responses — and `test/conformance_test.rb` replays them against a running server. The grader is
 Ruby on purpose: one written by the same hands as the server would share its assumptions
 ([conformance/README.md](conformance/README.md) says why, and is the format's authority).
@@ -116,13 +117,14 @@ bundle install
 bin/conformance       # builds, boots on a fresh database on 127.0.0.1:3004, runs the corpus
 ```
 
-Measured 2026-10-14, the binary alone with the Ruby gone:
+Measured 2026-10-22, with `17-device-revocation.yml` (2026-10-14, before it: `18 runs, 284
+assertions`):
 
 ```
-18 runs, 284 assertions, 0 failures, 0 errors, 0 skips
+19 runs, 314 assertions, 0 failures, 0 errors, 0 skips
 ```
 
-`bundle exec rake test` without a server runs the tooling's own tests and skips the sixteen scenario
+`bundle exec rake test` without a server runs the tooling's own tests and skips the seventeen scenario
 tests — by design, and never mistaken for a pass: `bin/conformance` fails on any skip.
 
 ## Gates

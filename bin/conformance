@@ -2,11 +2,11 @@
 # RUN THE CONFORMANCE CORPUS AGAINST THE SERVER -- the Rust binary, the only implementation since
 # Phase 6 of docs/superpowers/plans/2026-09-30-rust-rewrite.md deleted the Ruby host. A FRESH
 # database and chunk directory, a freshly issued device (the corpus's first assertion pins head_seq 0,
-# and 11-admin.yml's and 14-tenancy.yml's fixed emails must never have been used), the admin token
-# 11-admin.yml sends, and the Ruby verifier as the grader -- deliberately not a Rust runner, because a
-# grader written by the same hands as the server would share its assumptions. This script IS
-# .github/workflows/ci.yml's conformance job. (It was bin/conformance-rust until Phase 6; that name
-# is now a shim that execs this.)
+# and 11-admin.yml's, 14-tenancy.yml's and 17-device-revocation.yml's fixed emails must never have
+# been used), the admin token 11-admin.yml sends, and the Ruby verifier as the grader -- deliberately
+# not a Rust runner, because a grader written by the same hands as the server would share its
+# assumptions. This script IS .github/workflows/ci.yml's conformance job. (It was
+# bin/conformance-rust until Phase 6; that name is now a shim that execs this.)
 #
 #   bin/conformance                  # builds, boots on $SYNC_PORT (default 3004), verifies
 #   TINKEREX_SYNC_BIN=target/release/tinkerex-sync bin/conformance
@@ -53,9 +53,9 @@ export SECRET_KEY_BASE="conformance-secret-key-base"
 export SYNC_ADMIN_TOKEN="conformance-corpus-admin-token"   # the literal 11-admin.yml sends
 # THE POSTGRES LEG (rewrite plan §6): CONFORMANCE_DATABASE_URL=postgres://... points the binary at an
 # EMPTY database instead of the temp SQLite file. Empty is required, not merely preferred --
-# 11-admin.yml and 14-tenancy.yml provision fixed emails, so a database that has run the corpus
-# once answers 409 the second time -- and `migrate` reporting "Adopted" (an existing schema)
-# therefore fails the run before a single request goes out.
+# 11-admin.yml, 14-tenancy.yml and 17-device-revocation.yml provision fixed emails, so a database
+# that has run the corpus once answers 409 the second time -- and `migrate` reporting "Adopted"
+# (an existing schema) therefore fails the run before a single request goes out.
 if [ -n "${CONFORMANCE_DATABASE_URL:-}" ]; then
   export DATABASE_URL="$CONFORMANCE_DATABASE_URL"
   unset SQLITE_DATABASE

@@ -1,0 +1,345 @@
+---
+name: 17-device-revocation
+description: 'DELETE /v1/devices/:id, the revoke door (tinkerex#473), and who may
+  walk through it. Two kinds of credential exist on this server. A LIBRARY credential
+  is minted outside the device API -- the operator''s `device issue` (this run''s
+  bootstrap) or POST /v1/admin/libraries (the maker app''s per-user token) -- and
+  a DEVICE credential is minted by POST /v1/devices, which records the device that
+  minted it. A library credential may revoke any device credential of its own library;
+  a device credential may revoke only itself and the devices it minted; a library
+  credential is never revoked through this door at all, by anyone, itself included
+  (403 library_credential), because nothing can re-mint one through the API (the admin
+  door refuses an email it already has). A device credential reaching for one outside
+  its own subtree -- a sibling, or the device that minted it -- is 403 forbidden.
+  Revoking cascades: a revoked device takes every device it minted with it, so a token
+  minted in advance by a stolen one does not survive it. A revoked token is a plain
+  401 on every route, minting and the changelog included, the same shape as a token
+  that never existed. A repeat revoke is 204 again (idempotent; the row is kept with
+  its revoked_at, not deleted). An id that is not a device of the caller''s library
+  -- unknown, non-numeric, or another library''s -- is a plain 404 not_found, so the
+  door never says whether an id exists elsewhere; the other library''s device is untouched,
+  and its own credential cannot reach into this library either. Provisions a third
+  fixed email through the admin door (device-revocation@tinkerex-sync.test), for the
+  reason 11-admin.yml gives. Idle expiry (DEVICE_IDLE_DAYS) is a TTL and out of this
+  corpus''s reach by construction; crates/tinkerex-sync/tests/devices.rs pins it.'
+steps:
+- name: as the bootstrap (a library credential), note its own device id
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$capture": bootstrap_device_id
+      head_seq:
+        "$type": integer
+      user_id:
+        "$capture": library_user_id
+- name: the bootstrap mints device A
+  request:
+    method: POST
+    path: "/v1/devices"
+    body:
+      name: revocation-device-a
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$capture": device_a_id
+      device_token:
+        "$capture": device_a_token
+- name: the bootstrap mints device B, A's sibling
+  request:
+    method: POST
+    path: "/v1/devices"
+    body:
+      name: revocation-device-b
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$capture": device_b_id
+      device_token:
+        "$capture": device_b_token
+- name: device A mints its own child, A1
+  request:
+    method: POST
+    path: "/v1/devices"
+    headers:
+      Authorization: Bearer {{device_a_token}}
+    body:
+      name: revocation-device-a1
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$capture": device_a1_id
+      device_token:
+        "$capture": device_a1_token
+- name: device A mints a second child, A2
+  request:
+    method: POST
+    path: "/v1/devices"
+    headers:
+      Authorization: Bearer {{device_a_token}}
+    body:
+      name: revocation-device-a2
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$capture": device_a2_id
+      device_token:
+        "$capture": device_a2_token
+- name: whoami as A1 -- the child authenticates as itself, in the same library
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: Bearer {{device_a1_token}}
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$ref": device_a1_id
+      head_seq:
+        "$type": integer
+      user_id:
+        "$ref": library_user_id
+- name: device A cannot revoke its sibling B -- 403 forbidden, not a 404, because
+    B is in A's own library
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_b_id}}"
+    headers:
+      Authorization: Bearer {{device_a_token}}
+  expect:
+    status: 403
+    body:
+      error: forbidden
+- name: device A cannot revoke the bootstrap -- a library credential is never revoked
+    through this door
+  request:
+    method: DELETE
+    path: "/v1/devices/{{bootstrap_device_id}}"
+    headers:
+      Authorization: Bearer {{device_a_token}}
+  expect:
+    status: 403
+    body:
+      error: library_credential
+- name: the bootstrap cannot revoke itself either
+  request:
+    method: DELETE
+    path: "/v1/devices/{{bootstrap_device_id}}"
+  expect:
+    status: 403
+    body:
+      error: library_credential
+- name: A1 cannot revoke A, the device that minted it
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_a_id}}"
+    headers:
+      Authorization: Bearer {{device_a1_token}}
+  expect:
+    status: 403
+    body:
+      error: forbidden
+- name: device A revokes its own child A1 -- 204, no body
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_a1_id}}"
+    headers:
+      Authorization: Bearer {{device_a_token}}
+  expect:
+    status: 204
+- name: A1's token is now a plain 401 on whoami
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: Bearer {{device_a1_token}}
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: and on minting -- a revoked token cannot mint itself a replacement
+  request:
+    method: POST
+    path: "/v1/devices"
+    headers:
+      Authorization: Bearer {{device_a1_token}}
+    body:
+      name: revocation-device-a1-replacement
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: A revoking A1 again is 204 again -- idempotent
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_a1_id}}"
+    headers:
+      Authorization: Bearer {{device_a_token}}
+  expect:
+    status: 204
+- name: the bootstrap revokes device A -- 204
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_a_id}}"
+  expect:
+    status: 204
+- name: A's token is a plain 401 on the changelog, the path a syncing device polls
+  request:
+    method: GET
+    path: "/v1/changes"
+    query:
+      since: '0'
+    headers:
+      Authorization: Bearer {{device_a_token}}
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: A2, which A minted and nobody revoked by id, went with it -- the cascade
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: Bearer {{device_a2_token}}
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: a revoked token cannot reach the revoke door either -- 401 before any lookup
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_b_id}}"
+    headers:
+      Authorization: Bearer {{device_a_token}}
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: the bootstrap revoking A again is 204 again -- idempotent from the library
+    credential too
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_a_id}}"
+  expect:
+    status: 204
+- name: B, A's sibling, was not touched by A's revocation
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: Bearer {{device_b_token}}
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$ref": device_b_id
+      head_seq:
+        "$type": integer
+      user_id:
+        "$ref": library_user_id
+- name: an id no device has is a plain 404
+  request:
+    method: DELETE
+    path: "/v1/devices/999999999"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: a non-numeric id is the same plain 404
+  request:
+    method: DELETE
+    path: "/v1/devices/not-a-device"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: provision another library through the admin door
+  request:
+    method: POST
+    path: "/v1/admin/libraries"
+    headers:
+      Authorization: Bearer conformance-corpus-admin-token
+    body:
+      email: device-revocation@tinkerex-sync.test
+  expect:
+    status: 201
+    body:
+      device_id:
+        "$capture": foreign_device_id
+      device_token:
+        "$capture": foreign_device_token
+      user_id:
+        "$capture": foreign_user_id
+- name: the bootstrap reaching for the other library's device is the same plain 404
+    an unknown id gets -- nothing says the id exists elsewhere
+  request:
+    method: DELETE
+    path: "/v1/devices/{{foreign_device_id}}"
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: and the other library's credential reaching for B is the same 404 from the
+    other side
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_b_id}}"
+    headers:
+      Authorization: Bearer {{foreign_device_token}}
+  expect:
+    status: 404
+    body:
+      error: not_found
+- name: the other library's device still authenticates -- the 404 touched nothing
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: Bearer {{foreign_device_token}}
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$ref": foreign_device_id
+      head_seq: 0
+      user_id:
+        "$ref": foreign_user_id
+- name: device B revokes itself -- 204, the sign-out a device may do on its own
+  request:
+    method: DELETE
+    path: "/v1/devices/{{device_b_id}}"
+    headers:
+      Authorization: Bearer {{device_b_token}}
+  expect:
+    status: 204
+- name: B's token is now a plain 401
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+    headers:
+      Authorization: Bearer {{device_b_token}}
+  expect:
+    status: 401
+    body:
+      error: unauthorized
+- name: the bootstrap is untouched by everything above
+  request:
+    method: GET
+    path: "/v1/devices/whoami"
+  expect:
+    status: 200
+    body:
+      device_id:
+        "$ref": bootstrap_device_id
+      head_seq:
+        "$type": integer
+      user_id:
+        "$ref": library_user_id

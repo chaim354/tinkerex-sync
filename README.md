@@ -139,6 +139,11 @@ bundle exec rake test
 CI runs all of them on a self-hosted runner (`.github/workflows/ci.yml`). The Postgres and S3 legs
 are manual — the crate README has the commands.
 
+## Security
+
+Found a vulnerability? Report it privately through the repository's Security tab, as
+[`SECURITY.md`](SECURITY.md) describes, rather than in a public issue.
+
 ## History
 
 The sync engine was extracted from the [tinkerex](https://github.com/chaim354/tinkerex) monorepo

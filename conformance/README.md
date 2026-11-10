@@ -13,9 +13,8 @@ Scenario descriptions name the Ruby classes they were first recorded against (`S
 `Sync::Locks`, ...); read those where `main` last had them, `git show 36bb82e:app/...`.
 
 **This document does not restate the wire protocol.** For what each endpoint means, its request/
-response shape, and the sync model in general, read `docs/sync-protocol.md` in the sibling
-`chaim354/tinkerex` repository (`../tinkerex/docs/sync-protocol.md` from here, if you have it
-checked out alongside this one). This document is about the *corpus* — the file format, the
+response shape, and the sync model in general, read `docs/sync-protocol.md`
+(`../docs/sync-protocol.md` from here). This document is about the *corpus* — the file format, the
 matching rules, and how to run it — not about what the endpoints do.
 
 **Your reader is an implementer who does not read Ruby.** Everything below is written so you can

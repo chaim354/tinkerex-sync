@@ -102,7 +102,7 @@ where the Ruby image it replaced lists at 398 MB (measured 2026-10-07). It carri
   `tinkerex-sync device issue` or the admin route, siblings from `POST /v1/devices` on an enrolled
   device. They sync directly against it: the maker app is not in their path.
 
-The wire is specified in `docs/sync-protocol.md` in the maker repo.
+The wire is specified in `docs/sync-protocol.md`.
 
 ## The conformance corpus
 

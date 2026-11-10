@@ -1,0 +1,4 @@
+# Never commit a filled-in env file — it holds storage secrets.
+r2.env
+*.env
+!r2.env.example

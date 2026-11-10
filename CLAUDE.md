@@ -99,10 +99,9 @@ connection, so the daemon had only ever polled; through the binary it arrives in
   silently dropping an edit. A base that IS current is a clean fast-forward, and so is a stale base
   from the device that wrote the current version (the same-device exception).
 
-Normative wire spec: `docs/sync-protocol.md` in the maker-app repo (`chaim354/tinkerex`) — it
-should probably move here; both sibling CLAUDE.md files currently point at it there, so moving it
-means updating them in the same change. The recorded truth is the corpus (§7); where the two
-disagree, the scenario wins.
+Normative wire spec: `docs/sync-protocol.md`, in this repo since 2026-11-10 (it lived in
+`chaim354/tinkerex`). The recorded truth is the corpus (§7); where the two disagree, the scenario
+wins.
 
 **`docs/SYNC_SERVER.md` is HISTORICAL** — the Rails implementation's notes, kept for the reasoning.
 Its pooler section's substance is the `doctor` subcommand now. The `next_seq` row lock (§4b)
@@ -423,5 +422,5 @@ online runner does not fail: it queues for 24 h and is cancelled, which reads as
 
 | repo | role |
 |---|---|
-| `chaim354/tinkerex` | The **maker app** — projects, inventory, model library, addons. A CLIENT of this server via its `FileLayer::ChunkRemote` adapter (`LIBRARY_BACKEND=chunk_remote`), and the deployment that runs this image as its `sync` accessory; its `bin/sync-server` builds and boots this binary for its `bin/ci test-chunk-remote` gate. Owns `docs/sync-protocol.md`. |
+| `chaim354/tinkerex` | The **maker app** — projects, inventory, model library, addons. A CLIENT of this server via its `FileLayer::ChunkRemote` adapter (`LIBRARY_BACKEND=chunk_remote`), and the deployment that runs this image as its `sync` accessory; its `bin/sync-server` builds and boots this binary for its `bin/ci test-chunk-remote` gate. |
 | `chaim354/tinkerex-client` | The **Rust crates + Tauri desktop app** — `fs-provider`, the per-OS mounts, `sync-client`, `sync-engine`. Syncs against this server directly. |

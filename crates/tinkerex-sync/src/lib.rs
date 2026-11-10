@@ -1,6 +1,6 @@
 //! tinkerex-sync: the sync server, as one binary.
 //!
-//! Wire contract: `docs/sync-protocol.md` in the maker repo and the recorded corpus under
+//! Wire contract: `docs/sync-protocol.md` and the recorded corpus under
 //! `conformance/`. Storage conventions shared with the Rails implementation this replaces: see
 //! `db/README.md` beside the SQL seam.
 

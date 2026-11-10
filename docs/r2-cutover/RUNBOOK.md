@@ -4,8 +4,9 @@
 > not re-run since it was written (2026-06).** It dates from when the sync engine was Ruby and ran
 > inside the maker app, so its "Rails box" and "Rails DB" mean the sync server, and every
 > `config/…` and `docs/…` path below is in **`chaim354/tinkerex`**: the design is its
-> [`docs/r2-migration.md`](https://github.com/chaim354/tinkerex/blob/main/docs/r2-migration.md)
-> (also marked historical), and the `sync` accessory's env lives in its `config/deploy.yml`.
+> [`docs/r2-migration.md`](https://github.com/chaim354/tinkerex/blob/9c65d143a0157db6e27204c943f634b4f0896e2b/docs/r2-migration.md)
+> (historical, and deleted there on 2026-11-10, so that link is to the last commit that held it),
+> and the `sync` accessory's env lives in its `config/deploy.yml`.
 >
 > **Checked on the move:**
 > - **Still true.** This server reads the same `STORAGE_BACKEND` and `CHUNK_*` variables, and keys
@@ -46,7 +47,7 @@ modified, so rollback data stays intact; the cutover is just env, reversible wit
 | **R2 API token** (Access Key ID + Secret) | R2 → Manage R2 API Tokens → Create (Object Read & Write, **scoped to the bucket**). Secret shown once. |
 | **Production web origin** | The exact `scheme://host(:port)` the web UI loads from — for `cors.json`. Only needed if the web UI will hit R2. |
 | **SeaweedFS S3 creds** | The current source store creds (`admin`/secret in the LAN deploy). |
-| **Deploy host access** | Your normal Kamal deploy shell (`~/kamalw` / `kamal`) per `docs/DEPLOY.md`. |
+| **Deploy host access** | Your normal Kamal deploy shell (`~/kamalw` / `kamal`) per `docs/guides/DEPLOY.md`. |
 
 Tooling needed locally: `rclone` (migration), `bash`, and either `wrangler` or `aws` CLI
 (CORS — optional, can use the dashboard instead). `cargo` (smoke test).
@@ -140,7 +141,7 @@ CHUNK_ACCESS_KEY_ID: <R2 token Access Key ID>                  # was admin
 
 ```sh
 export CHUNK_SECRET_ACCESS_KEY=<R2 token Secret Access Key>   # sourced by .kamal/secrets
-~/kamalw deploy        # or: kamal deploy   (rsync the tree first per docs/DEPLOY.md)
+~/kamalw deploy        # or: kamal deploy   (rsync the tree first per docs/guides/DEPLOY.md)
 ```
 
 The Rails box only signs URLs (local HMAC) and never contacts the store, so it needs no
